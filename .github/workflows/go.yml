@@ -1,0 +1,119 @@
+name: CI & Release (Go + macOS DMG)
+
+on:
+  push:
+    branches: [ "main" ]
+    tags:
+      - "v*"          # cria release quando um tag vX.Y.Z for enviado
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write       # necessário para publicar a Release
+
+jobs:
+  build-test:
+    name: Build & Test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Build
+        run: go build -v ./...
+
+      - name: Test
+        run: go test -v ./...
+
+  release-macos:
+    name: Build Universal Binary, Package DMG & Release (macOS)
+    if: startsWith(github.ref, 'refs/tags/')    # roda apenas em tags v*
+    runs-on: macos-latest
+    needs: build-test
+    env:
+      APP_NAME: seidor-aws-cli
+      VOL_NAME: "Seidor AWS CLI"
+      MAIN_PKG: ./cmd/seidor-aws-cli            # ajuste se o main estiver em outro caminho
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Derive version from tag
+        run: |
+          # ex: v1.2.3 -> VERSION=1.2.3
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+          echo "TAG_NAME=${GITHUB_REF_NAME}" >> $GITHUB_ENV
+
+      - name: Build darwin/amd64
+        env:
+          GOOS: darwin
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/${APP_NAME}_amd64 ${MAIN_PKG}
+
+      - name: Build darwin/arm64
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+          CGO_ENABLED: 0
+        run: |
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/${APP_NAME}_arm64 ${MAIN_PKG}
+
+      - name: Create universal binary (lipo)
+        run: |
+          lipo -create -output dist/${APP_NAME} dist/${APP_NAME}_amd64 dist/${APP_NAME}_arm64
+          chmod +x dist/${APP_NAME}
+          file dist/${APP_NAME}
+          # opcional: verificar que é "Universal"
+
+      - name: Stage files for DMG
+        run: |
+          mkdir -p pkg/"${VOL_NAME}"
+          cp dist/${APP_NAME} pkg/"${VOL_NAME}"/${APP_NAME}
+          if [ -f LICENSE ]; then cp LICENSE pkg/"${VOL_NAME}"/; fi
+          if [ -f README.md ]; then cp README.md pkg/"${VOL_NAME}"/; fi
+          cat > pkg/"${VOL_NAME}"/INSTALL.txt <<'TXT'
+          Installation (Terminal):
+            1) Open Terminal.
+            2) cd /Volumes/Seidor\ AWS\ CLI
+            3) sudo install -m 0755 seidor-aws-cli /usr/local/bin/seidor-aws-cli
+            4) seidor-aws-cli --help
+          Note: App is unsigned. You may need to allow execution (System Settings > Privacy & Security).
+          TXT
+
+      - name: Build DMG (hdiutil)
+        run: |
+          DMG=dist/${APP_NAME}_${VERSION}_macOS_universal.dmg
+          hdiutil create -volname "${VOL_NAME}" -srcfolder "pkg/${VOL_NAME}" -ov -format UDZO "$DMG"
+          echo "DMG_PATH=$DMG" >> $GITHUB_ENV
+
+      - name: Checksums
+        run: |
+          shasum -a 256 "$DMG_PATH" > "${DMG_PATH}.sha256"
+          cat "${DMG_PATH}.sha256"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          name: ${{ env.TAG_NAME }}
+          draft: false
+          prerelease: false
+          files: |
+            ${{ env.DMG_PATH }}
+            ${{ env.DMG_PATH }}.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
