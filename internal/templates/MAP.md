@@ -1,5 +1,7 @@
-# MAP Template
+# MAP Funding Summary
 
-Customer: {{.Customer}}
-ARR Tier: {{.Tier}}
-Funding Cap: {{.Cap}}
+| Field       | Value |
+|-------------|-------|
+| Customer    | {{.Customer}} |
+| ARR Tier    | {{.Tier}} |
+| Funding Cap | {{.Cap}} |

@@ -1,24 +1,35 @@
 # seidor-aws-cli
 
+Command‑line utility to generate AWS Pricing Calculator estimates and MAP incentive artifacts.
 
-Lightweight command line tool to generate AWS Pricing Calculator estimates and MAP incentive artifacts.
+## Features
 
-### Quick example
+- Create official AWS Pricing Calculator estimates
+- Produce MAP funding summaries in Markdown, Excel and text formats
+- Interactive wizard for quick data collection
+
+## Installation
+
+Requires Go 1.24 or newer.
 
 ```bash
-# run interactive MAP wizard, create official AWS Pricing Calculator estimate and generate MAP.txt
+go install github.com/example/seidor-aws-cli@latest
+```
+
+## Quick example
+
+Run the interactive MAP wizard and write artifacts to `./out`:
+
+```bash
 seidor-aws-cli map wizard --out ./out
 ```
 
-## Building
+## Development
 
-```
-make build
-```
+Use `make` targets for common tasks:
 
-## Testing
-
-```
-make test
+```bash
+make build   # compile the project
+make test    # run unit tests
 ```
 
