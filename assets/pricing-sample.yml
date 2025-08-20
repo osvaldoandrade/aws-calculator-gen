@@ -1,0 +1,18 @@
+ec2:
+  m7g.large: 0.1
+ebs:
+  gp3_gb_month: 0.08
+  io_requests_million: 0.005
+s3:
+  storage_gb_month: 0.023
+  get_requests_million: 0.4
+  put_requests_million: 5
+  data_out_gb: 0.09
+rds:
+  db.m7g.large: 0.25
+  storage_gb_month: 0.115
+lambda:
+  requests_million: 0.2
+  gb_seconds: 0.0000166667
+cloudfront:
+  data_out_gb: 0.085
