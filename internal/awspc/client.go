@@ -2,6 +2,7 @@ package awspc
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -28,7 +29,7 @@ type AWSClient struct {
 	svc *bcm.Client
 }
 
-// CreateWorkloadEstimate creates a workload estimate and a single usage line.
+// CreateWorkloadEstimate creates a workload estimate and several usage lines.
 func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region string, amount float64) (string, error) {
 	out, err := c.svc.CreateWorkloadEstimate(ctx, &bcm.CreateWorkloadEstimateInput{
 		Name: aws.String(title),
@@ -37,27 +38,43 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region st
 		return "", err
 	}
 	id := aws.ToString(out.Id)
-	// best effort: create one usage item reflecting the amount
+	entries := []bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+		{
+			ServiceCode: aws.String("AmazonEC2"),
+			UsageType:   aws.String("USE1-BoxUsage:m7g.large"),
+			Operation:   aws.String("RunInstances"),
+		},
+		{
+			ServiceCode: aws.String("AmazonS3"),
+			UsageType:   aws.String("USE1-TimedStorage-ByteHrs"),
+			Operation:   aws.String("PutObject"),
+		},
+		{
+			ServiceCode: aws.String("AmazonRDS"),
+			UsageType:   aws.String("USE1-InstanceUsage:db.m7g.large"),
+			Operation:   aws.String("CreateDBInstance"),
+		},
+		{
+			ServiceCode: aws.String("AWSLambda"),
+			UsageType:   aws.String("USE1-Lambda-GB-Second"),
+			Operation:   aws.String("Invoke"),
+		},
+	}
+	portion := amount / float64(len(entries))
+	for i := range entries {
+		entries[i].Key = aws.String(strconv.Itoa(i + 1))
+		entries[i].UsageAccountId = aws.String("123456789012")
+		entries[i].Amount = aws.Float64(portion)
+	}
 	_, _ = c.svc.BatchCreateWorkloadEstimateUsage(ctx, &bcm.BatchCreateWorkloadEstimateUsageInput{
 		WorkloadEstimateId: aws.String(id),
-		Usage: []bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
-			{
-				Key:            aws.String("1"),
-				ServiceCode:    aws.String("AmazonEC2"),
-				UsageType:      aws.String("USE1-BoxUsage:m7g.large"),
-				Operation:      aws.String("RunInstances"),
-				UsageAccountId: aws.String("123456789012"),
-				Amount:         aws.Float64(amount),
-			},
-		},
+		Usage:              entries,
 	})
 	return id, nil
-
 }
 
 // StubClient implements Client without calling AWS.
 type StubClient struct{}
-
 
 func (StubClient) CreateWorkloadEstimate(ctx context.Context, title, region string, amount float64) (string, error) {
 	return "stub-id", nil
