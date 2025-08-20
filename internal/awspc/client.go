@@ -2,6 +2,8 @@ package awspc
 
 import (
 	"context"
+	"math"
+	"sort"
 	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -40,23 +42,29 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, p
 	id := aws.ToString(out.Id)
 
 	prefix := regionPrefix(region)
-	entries := defaultEntries(prefix, profile)
-	if len(entries) == 0 {
+	lines := defaultEntries(prefix, profile)
+	if len(lines) == 0 {
 		return id, nil
 	}
 
-	portion := amount / float64(len(entries))
-	for i := range entries {
-		entries[i].Key = aws.String(strconv.Itoa(i + 1))
-		entries[i].UsageAccountId = aws.String("123456789012")
-		entries[i].Amount = aws.Float64(portion)
+	assignUsage(lines, amount)
+	var usage []bcmtypes.BatchCreateWorkloadEstimateUsageEntry
+	for i := range lines {
+		if lines[i].Amount == nil || *lines[i].Amount == 0 {
+			continue
+		}
+		lines[i].Key = aws.String(strconv.Itoa(len(usage) + 1))
+		lines[i].UsageAccountId = aws.String("123456789012")
+		usage = append(usage, lines[i].BatchCreateWorkloadEstimateUsageEntry)
 	}
-	_, err = c.svc.BatchCreateWorkloadEstimateUsage(ctx, &bcm.BatchCreateWorkloadEstimateUsageInput{
-		WorkloadEstimateId: aws.String(id),
-		Usage:              entries,
-	})
-	if err != nil {
-		return "", err
+	if len(usage) > 0 {
+		_, err = c.svc.BatchCreateWorkloadEstimateUsage(ctx, &bcm.BatchCreateWorkloadEstimateUsageInput{
+			WorkloadEstimateId: aws.String(id),
+			Usage:              usage,
+		})
+		if err != nil {
+			return "", err
+		}
 	}
 	return id, nil
 }
@@ -85,48 +93,116 @@ func regionPrefix(region string) string {
 	}
 }
 
-func defaultEntries(prefix, profile string) []bcmtypes.BatchCreateWorkloadEstimateUsageEntry {
+type usageLine struct {
+	bcmtypes.BatchCreateWorkloadEstimateUsageEntry
+	price float64
+}
+
+func defaultEntries(prefix, profile string) []usageLine {
 	if profile == "lake" {
-		return []bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+		return []usageLine{
 			{
-				ServiceCode: aws.String("AmazonDynamoDB"),
-				UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
+				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+					ServiceCode: aws.String("AmazonDynamoDB"),
+					UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
+					Operation:   aws.String("CreateTable"),
+				},
+				price: 0.25 / (730 * 1e9), // $0.25 per GB-month
 			},
 			{
-				ServiceCode: aws.String("AmazonRedshift"),
-				UsageType:   aws.String(prefix + "-Redshift:ServerlessUsage"),
+				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+					ServiceCode: aws.String("AmazonRedshift"),
+					UsageType:   aws.String(prefix + "-Redshift:ServerlessUsage"),
+					Operation:   aws.String("CreateWorkgroup"),
+				},
+				price: 0.5, // per RPU-hour
 			},
 			{
-				ServiceCode: aws.String("AWSGlue"),
-				UsageType:   aws.String(prefix + "-ETL-Flex-DPU-Hour"),
+				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+					ServiceCode: aws.String("AWSGlue"),
+					UsageType:   aws.String(prefix + "-ETL-Flex-DPU-Hour"),
+					Operation:   aws.String("StartJobRun"),
+				},
+				price: 0.44, // per DPU-hour
 			},
 			{
-				ServiceCode: aws.String("AmazonAthena"),
-				UsageType:   aws.String(prefix + "-DataScannedInTB"),
+				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+					ServiceCode: aws.String("AmazonAthena"),
+					UsageType:   aws.String(prefix + "-DataScannedInTB"),
+					Operation:   aws.String("RunQuery"),
+				},
+				price: 5.0, // per TB scanned
 			},
 		}
 	}
 	// default transactional profile
-	return []bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+	return []usageLine{
 		{
-			ServiceCode: aws.String("AmazonEC2"),
-			UsageType:   aws.String(prefix + "-BoxUsage:m7g.large"),
-			Operation:   aws.String("RunInstances"),
+			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+				ServiceCode: aws.String("AmazonEC2"),
+				UsageType:   aws.String(prefix + "-BoxUsage:m7g.large"),
+				Operation:   aws.String("RunInstances"),
+			},
+			price: 0.096, // per hour
 		},
 		{
-			ServiceCode: aws.String("AmazonS3"),
-			UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
-			Operation:   aws.String("PutObject"),
+			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+				ServiceCode: aws.String("AmazonS3"),
+				UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
+				Operation:   aws.String("PutObject"),
+			},
+			price: 0.023 / (730 * 1e9), // $0.023 per GB-month
 		},
 		{
-			ServiceCode: aws.String("AmazonRDS"),
-			UsageType:   aws.String(prefix + "-InstanceUsage:db.m7g.large"),
-			Operation:   aws.String("CreateDBInstance"),
+			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+				ServiceCode: aws.String("AmazonRDS"),
+				UsageType:   aws.String(prefix + "-InstanceUsage:db.m7g.large"),
+				Operation:   aws.String("CreateDBInstance"),
+			},
+			price: 0.206, // per hour
 		},
 		{
-			ServiceCode: aws.String("AWSLambda"),
-			UsageType:   aws.String(prefix + "-Lambda-GB-Second"),
-			Operation:   aws.String("Invoke"),
+			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+				ServiceCode: aws.String("AWSLambda"),
+				UsageType:   aws.String(prefix + "-Lambda-GB-Second"),
+				Operation:   aws.String("Invoke"),
+			},
+			price: 0.0000166667, // per GB-second
 		},
+	}
+}
+
+func assignUsage(lines []usageLine, amount float64) {
+	if amount <= 0 {
+		return
+	}
+	remaining := amount
+	for i := range lines {
+		if remaining >= lines[i].price {
+			lines[i].Amount = aws.Float64(1)
+			remaining -= lines[i].price
+		}
+	}
+	sort.Slice(lines, func(i, j int) bool { return lines[i].price > lines[j].price })
+	for i := range lines {
+		if remaining < lines[i].price {
+			continue
+		}
+		units := math.Floor(remaining / lines[i].price)
+		if units > 0 {
+			if lines[i].Amount == nil {
+				lines[i].Amount = aws.Float64(units)
+			} else {
+				*lines[i].Amount += units
+			}
+			remaining -= units * lines[i].price
+		}
+	}
+	if remaining > 0 {
+		if lines[0].Amount == nil {
+			lines[0].Amount = aws.Float64(remaining / lines[0].price)
+		} else {
+			*lines[0].Amount += remaining / lines[0].price
+		}
 	}
 }

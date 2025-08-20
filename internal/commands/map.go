@@ -5,6 +5,7 @@ import (
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/example/seidor-aws-cli/internal/awspc"
 	"github.com/example/seidor-aws-cli/internal/incentives"
+	"github.com/example/seidor-aws-cli/internal/llm"
 	"github.com/example/seidor-aws-cli/internal/render"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
@@ -64,6 +65,17 @@ func (MapCommand) Command() *cobra.Command {
 
 			plan := incentives.ComputeMAPFunding(arr)
 			pterm.Info.Printf("Tier %s with cap %.2f\n", plan.Tier, plan.CapAmount)
+
+			llmClient := llm.NewOpenAIClientFromEnv()
+			summary, err := llmClient.Generate(cmd.Context(), llm.Prompt{
+				System: "You generate brief MAP summaries in Portuguese.",
+				User:   fmt.Sprintf("Cliente %s, perfil %s, ARR %.2f", customer, profile, arr),
+			})
+			if err != nil {
+				pterm.Warning.Printf("LLM resumo falhou: %v\n", err)
+			} else {
+				pterm.Info.Println(summary)
+			}
 			client, err := awspc.New(cmd.Context())
 			if err != nil {
 				pterm.Warning.Printf("using stub AWS client: %v\n", err)
