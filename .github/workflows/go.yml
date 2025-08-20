@@ -1,4 +1,4 @@
-name: CI, Tag & Multi-Platform Release (macOS DMG drag, NSIS EXE, RPM)
+name: CI, Tag & Release (macOS DMG drag, Linux RPM/DEB incl. Raspberry Pi)
 
 on:
   push:
@@ -70,7 +70,7 @@ jobs:
           fi
 
   release-macos:
-    name: macOS • DMG drag-to-Applications (Universal, ad-hoc signed)
+    name: macOS • DMG drag-to-Applications (Universal, ad-hoc signed, /usr/local/bin)
     runs-on: macos-latest
     needs: tag
     env:
@@ -97,8 +97,8 @@ jobs:
           chmod +x dist/${APP_NAME}
           file dist/${APP_NAME}
 
-      # Build proper .app bundle (script launcher + Info.plist + icon)
-      - name: Create .app bundle
+      # Build proper .app bundle (launcher + Info.plist + icon)
+      - name: Create .app bundle (installs to /usr/local/bin)
         run: |
           APP="${APP_DISPLAY}.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -111,7 +111,7 @@ jobs:
           <dict>
             <key>CFBundleDevelopmentRegion</key><string>en</string>
             <key>CFBundleDisplayName</key><string>${APP_DISPLAY}</string>
-            <key>CFBundleExecutable</key><string>${APP_NAME}-installer</string>
+            <key>CFBundleExecutable</key><string>launcher</string>
             <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
             <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
             <key>CFBundleName</key><string>${APP_DISPLAY}</string>
@@ -119,52 +119,41 @@ jobs:
             <key>CFBundleShortVersionString</key><string>${VERSION}</string>
             <key>CFBundleVersion</key><string>${VERSION}</string>
             <key>LSMinimumSystemVersion</key><string>11.0</string>
-            <key>NSHumanReadableCopyright</key><string>© ${GITHUB_REPOSITORY_OWNER}</string>
             <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
             <key>CFBundleIconFile</key><string>SeidorAWSCLI.icns</string>
           </dict>
           </plist>
           PLIST
 
-          # Installer launcher (bash) - eleva privilégio via AppleScript e copia o binário
-          cat > "$APP/Contents/MacOS/${APP_NAME}-installer" <<'SH'
+          # Launcher (bash) — instala SEMPRE em /usr/local/bin
+          cat > "$APP/Contents/MacOS/launcher" <<'SH'
           #!/bin/bash
           set -euo pipefail
           BIN_SRC="$(dirname "$0")/../Resources/seidor-aws-cli"
-
-          # destino: preferir /opt/homebrew/bin (Apple Silicon) se existir; caso contrário /usr/local/bin
           TARGET="/usr/local/bin"
-          if [ -d "/opt/homebrew/bin" ]; then TARGET="/opt/homebrew/bin"; fi
-
           /usr/bin/osascript <<OSA
           do shell script "mkdir -p '${TARGET}' && install -m 0755 '${BIN_SRC}' '${TARGET}/seidor-aws-cli' && xattr -d com.apple.quarantine '${TARGET}/seidor-aws-cli' || true" with administrator privileges
           OSA
-
-          /usr/bin/osascript -e 'display dialog "Seidor AWS CLI instalado em '"${TARGET}"'." buttons {"OK"} default button 1 with icon note'
+          /usr/bin/osascript -e 'display dialog "Seidor AWS CLI instalado em /usr/local/bin." buttons {"OK"} default button 1 with icon note'
           SH
-          chmod +x "$APP/Contents/MacOS/${APP_NAME}-installer"
+          chmod +x "$APP/Contents/MacOS/launcher"
 
-          # Copia binário universal para Resources
+          # Binário universal embutido
           cp dist/${APP_NAME} "$APP/Contents/Resources/seidor-aws-cli"
 
-          # Ícone (se houver)
+          # Ícone (opcional)
           if [ -f assets/icon.png ]; then
             mkdir -p icon.iconset
             for s in 16 32 64 128 256 512 1024; do /usr/bin/sips -z $s $s assets/icon.png --out icon.iconset/icon_${s}x${s}.png >/dev/null; done
             /usr/bin/iconutil -c icns icon.iconset -o "$APP/Contents/Resources/SeidorAWSCLI.icns"
-          else
-            # sem ícone custom, usa genérico (só para não quebrar)
-            : # nada
           fi
 
-      # Ad-hoc codesign do .app (evita "app danificado"; ainda não é notarizado)
-      - name: Ad-hoc sign .app
+      - name: Ad-hoc codesign .app
         run: |
           APP="${APP_DISPLAY}.app"
-          codesign --force --deep -s - --timestamp=none "$APP"
+          codesign --force --deep -s - --timestamp=none "$APP" || true
           codesign -dv "$APP" || true
 
-      # Monta DMG com link para /Applications
       - name: Create DMG (drag-to-Applications)
         run: |
           APP="${APP_DISPLAY}.app"
@@ -175,13 +164,11 @@ jobs:
           hdiutil create -volname "${VOL_NAME}" -srcfolder dmgroot -ov -format UDZO "$DMG"
           echo "DMG_PATH=$DMG" >> $GITHUB_ENV
 
-      - name: Checksums
+      - name: Checksums + Upload
         run: |
           shasum -a 256 "$DMG_PATH" > "${DMG_PATH}.sha256"
           cat "${DMG_PATH}.sha256"
-
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.tag.outputs.TAG_NAME }}
           name: ${{ needs.tag.outputs.TAG_NAME }}
@@ -201,6 +188,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with: { go-version: '1.22', cache: true }
+
       - name: Build linux/amd64
         env: { GOOS: linux, GOARCH: amd64, CGO_ENABLED: 0 }
         run: |
@@ -213,11 +201,13 @@ jobs:
           mkdir -p pkg/linux/arm64
           go build -trimpath -ldflags="-s -w -X main.version=${{ needs.tag.outputs.VERSION }}" -o dist/${APP_NAME}_linux_arm64 ${MAIN_PKG}
           cp dist/${APP_NAME}_linux_arm64 pkg/linux/arm64/${APP_NAME}
+
       - name: Install fpm
         run: |
           sudo apt-get update
           sudo apt-get install -y ruby ruby-dev rubygems rpm
           sudo gem install --no-document fpm
+
       - name: Package RPMs & Upload
         run: |
           fpm -s dir -t rpm -n ${APP_NAME} -v ${{ needs.tag.outputs.VERSION }} -a x86_64 --license MIT \
@@ -231,7 +221,6 @@ jobs:
           mv ${APP_NAME}-${{ needs.tag.outputs.VERSION }}-1.x86_64.rpm dist/${APP_NAME}_${{ needs.tag.outputs.VERSION }}_linux_x86_64.rpm
           mv ${APP_NAME}-${{ needs.tag.outputs.VERSION }}-1.aarch64.rpm dist/${APP_NAME}_${{ needs.tag.outputs.VERSION }}_linux_aarch64.rpm
           (cd dist && shasum -a 256 *.rpm > SHA256SUMS.rpm.txt)
-        shell: bash
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.tag.outputs.TAG_NAME }}
@@ -243,111 +232,75 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  release-windows:
-    name: Windows • NSIS installers (x64 & ARM64) with icon
-    runs-on: windows-latest
+  release-linux-deb:
+    name: Linux • DEB (amd64, arm64, armhf / Raspberry Pi)
+    runs-on: ubuntu-latest
     needs: tag
-    env:
-      VERSION: ${{ needs.tag.outputs.VERSION }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
         uses: actions/setup-go@v5
         with: { go-version: '1.22', cache: true }
 
-      - name: Build windows/amd64
-        shell: bash
-        env: { GOOS: windows, GOARCH: amd64, CGO_ENABLED: 0 }
+      - name: Build linux/amd64
+        env: { GOOS: linux, GOARCH: amd64, CGO_ENABLED: 0 }
+        run: |
+          mkdir -p dist pkg/deb/amd64
+          go build -trimpath -ldflags="-s -w -X main.version=${{ needs.tag.outputs.VERSION }}" -o dist/${APP_NAME}_linux_amd64 ${MAIN_PKG}
+          cp dist/${APP_NAME}_linux_amd64 pkg/deb/amd64/${APP_NAME}
+      - name: Build linux/arm64
+        env: { GOOS: linux, GOARCH: arm64, CGO_ENABLED: 0 }
+        run: |
+          mkdir -p pkg/deb/arm64
+          go build -trimpath -ldflags="-s -w -X main.version=${{ needs.tag.outputs.VERSION }}" -o dist/${APP_NAME}_linux_arm64 ${MAIN_PKG}
+          cp dist/${APP_NAME}_linux_arm64 pkg/deb/arm64/${APP_NAME}
+      - name: Build linux/armhf (Raspberry Pi)
+        env:
+          GOOS: linux
+          GOARCH: arm
+          GOARM: "7"
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p pkg/deb/armhf
+          go build -trimpath -ldflags="-s -w -X main.version=${{ needs.tag.outputs.VERSION }}" -o dist/${APP_NAME}_linux_armhf ${MAIN_PKG}
+          cp dist/${APP_NAME}_linux_armhf pkg/deb/armhf/${APP_NAME}
+
+      - name: Install fpm
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-dev rubygems fakeroot
+          sudo gem install --no-document fpm
+
+      - name: Package DEBs & Upload
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/${APP_NAME}_windows_amd64.exe ${MAIN_PKG}
-      - name: Build windows/arm64
-        shell: bash
-        env: { GOOS: windows, GOARCH: arm64, CGO_ENABLED: 0 }
-        run: |
-          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/${APP_NAME}_windows_arm64.exe ${MAIN_PKG}
-
-      - name: Install NSIS
-        run: choco install nsis -y
-
-      - name: Generate NSIS scripts (icons if available)
-        shell: pwsh
-        run: |
-          $icon = (Test-Path assets/icon.ico) ? 'Icon assets\icon.ico' : ''
-          $nsis = @"
-          !include "MUI2.nsh"
-          !define APP_NAME  "${{ env.APP_DISPLAY }}"
-          !define BIN_NAME  "seidor-aws-cli.exe"
-          !define VERSION   "${{ env.VERSION }}"
-          !define COMPANY   "${{ github.repository_owner }}"
-          !define URL       "https://github.com/${{ github.repository }}"
-          RequestExecutionLevel admin
-          !define MUI_ABORTWARNING
-          @ICON@
-          Var Arch
-          !macro MakeInstaller ARCH BINPATH OUTFILE
-            OutFile "${OUTFILE}"
-            !ifdef ICON
-            !endif
-            InstallDir "$PROGRAMFILES64\Seidor AWS CLI"
-            Name "${APP_NAME} (${ARCH})"
-            BrandingText "Seidor AWS CLI ${VERSION} (${ARCH})"
-            !insertmacro MUI_PAGE_WELCOME
-            !insertmacro MUI_PAGE_DIRECTORY
-            !insertmacro MUI_PAGE_INSTFILES
-            !insertmacro MUI_PAGE_FINISH
-            !insertmacro MUI_UNPAGE_CONFIRM
-            !insertmacro MUI_UNPAGE_INSTFILES
-            !insertmacro MUI_LANGUAGE "English"
-            Section "Install"
-              SetOutPath "$INSTDIR"
-              File "${BINPATH}"
-              Rename "$INSTDIR\${APP_NAME}_${VERSION}_windows_${ARCH}.exe" "$INSTDIR\${BIN_NAME}"
-              ReadRegStr $0 HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path"
-              ${If} $0 != ""
-                StrCpy $1 "$0;$INSTDIR"
-                WriteRegExpandStr HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path" "$1"
-                System::Call 'USER32::SendMessageTimeout(p 0xffff, i ${WM_SETTINGCHANGE}, p 0, t "Environment", i 0x0000, i 5000, *i .r0)'
-              ${EndIf}
-              CreateShortCut "$SMPROGRAMS\Seidor AWS CLI\Seidor AWS CLI.lnk" "$INSTDIR\${BIN_NAME}"
-            SectionEnd
-            Section "Uninstall"
-              Delete "$INSTDIR\${BIN_NAME}"
-              RMDir /r "$SMPROGRAMS\Seidor AWS CLI"
-              RMDir "$INSTDIR"
-            SectionEnd
-          !macroend
-          "@
-          if ($icon -ne '') { $nsis = $nsis -replace '@ICON@', '!define MUI_ICON "assets\\icon.ico"' } else { $nsis = $nsis -replace '@ICON@', '' }
-          Set-Content -Path installer_x64.nsi  -Value ($nsis + @"
-          !define OUTFILE "dist\seidor-aws-cli_${{ env.VERSION }}_windows_x64_setup.exe"
-          !insertmacro MakeInstaller "x64" "dist\seidor-aws-cli_windows_amd64.exe" "${OUTFILE}"
-          "@) -Encoding ASCII
-          Set-Content -Path installer_arm64.nsi -Value ($nsis + @"
-          !define OUTFILE "dist\seidor-aws-cli_${{ env.VERSION }}_windows_arm64_setup.exe"
-          !insertmacro MakeInstaller "arm64" "dist\seidor-aws-cli_windows_arm64.exe" "${OUTFILE}"
-          "@) -Encoding ASCII
-
-      - name: Build NSIS installers
-        shell: pwsh
-        run: |
-          & 'C:\Program Files (x86)\NSIS\makensis.exe' /V2 installer_x64.nsi
-          & 'C:\Program Files (x86)\NSIS\makensis.exe' /V2 installer_arm64.nsi
-          Get-ChildItem dist\*.exe
-
-      - name: Checksums + Upload
-        shell: pwsh
-        run: |
-          Get-FileHash -Algorithm SHA256 "dist\seidor-aws-cli_${env:VERSION}_windows_x64_setup.exe"   | ForEach-Object { "$($_.Hash)  $($_.Path)" } | Out-File -Encoding ASCII "dist\seidor-aws-cli_${env:VERSION}_windows_x64_setup.exe.sha256"
-          Get-FileHash -Algorithm SHA256 "dist\seidor-aws-cli_${env:VERSION}_windows_arm64_setup.exe" | ForEach-Object { "$($_.Hash)  $($_.Path)" } | Out-File -Encoding ASCII "dist\seidor-aws-cli_${env:VERSION}_windows_arm64_setup.exe.sha256"
+          fpm -s dir -t deb -n ${APP_NAME} -v ${{ needs.tag.outputs.VERSION }} -a amd64  \
+            --deb-no-default-config-files --license MIT \
+            --description "${APP_DISPLAY}" --vendor "${{ github.repository_owner }}" \
+            --url "https://github.com/${{ github.repository }}" \
+            pkg/deb/amd64/${APP_NAME}=/usr/local/bin/${APP_NAME}
+          fpm -s dir -t deb -n ${APP_NAME} -v ${{ needs.tag.outputs.VERSION }} -a arm64  \
+            --deb-no-default-config-files --license MIT \
+            --description "${APP_DISPLAY}" --vendor "${{ github.repository_owner }}" \
+            --url "https://github.com/${{ github.repository }}" \
+            pkg/deb/arm64/${APP_NAME}=/usr/local/bin/${APP_NAME}
+          fpm -s dir -t deb -n ${APP_NAME} -v ${{ needs.tag.outputs.VERSION }} -a armhf \
+            --deb-no-default-config-files --license MIT \
+            --description "${APP_DISPLAY}" --vendor "${{ github.repository_owner }}" \
+            --url "https://github.com/${{ github.repository }}" \
+            pkg/deb/armhf/${APP_NAME}=/usr/local/bin/${APP_NAME}
+          mv ${APP_NAME}_${{ needs.tag.outputs.VERSION }}_amd64.deb dist/${APP_NAME}_${{ needs.tag.outputs.VERSION }}_linux_amd64.deb
+          mv ${APP_NAME}_${{ needs.tag.outputs.VERSION }}_arm64.deb dist/${APP_NAME}_${{ needs.tag.outputs.VERSION }}_linux_arm64.deb
+          mv ${APP_NAME}_${{ needs.tag.outputs.VERSION }}_armhf.deb dist/${APP_NAME}_${{ needs.tag.outputs.VERSION }}_raspbian_armhf.deb
+          (cd dist && shasum -a 256 *.deb > SHA256SUMS.deb.txt)
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.tag.outputs.TAG_NAME }}
           name: ${{ needs.tag.outputs.TAG_NAME }}
           files: |
-            dist/seidor-aws-cli_${{ env.VERSION }}_windows_x64_setup.exe
-            dist/seidor-aws-cli_${{ env.VERSION }}_windows_x64_setup.exe.sha256
-            dist/seidor-aws-cli_${{ env.VERSION }}_windows_arm64_setup.exe
-            dist/seidor-aws-cli_${{ env.VERSION }}_windows_arm64_setup.exe.sha256
+            dist/${{ env.APP_NAME }}_${{ needs.tag.outputs.VERSION }}_linux_amd64.deb
+            dist/${{ env.APP_NAME }}_${{ needs.tag.outputs.VERSION }}_linux_arm64.deb
+            dist/${{ env.APP_NAME }}_${{ needs.tag.outputs.VERSION }}_raspbian_armhf.deb
+            dist/SHA256SUMS.deb.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
