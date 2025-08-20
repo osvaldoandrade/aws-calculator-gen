@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
+	"strconv"
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
-
 	"github.com/example/seidor-aws-cli/internal/awspc"
 	"github.com/example/seidor-aws-cli/internal/incentives"
 	"github.com/example/seidor-aws-cli/internal/render"
@@ -35,15 +34,22 @@ func (MapCommand) Command() *cobra.Command {
 			if err := survey.AskOne(&survey.Input{Message: "Customer name:"}, &customer, survey.WithValidator(survey.Required)); err != nil {
 				return err
 			}
-			var arrStr string
-			arrOptions := []string{"100000", "150000", "300000"}
-			if err := survey.AskOne(&survey.Select{Message: "Expected ARR (USD):", Options: arrOptions}, &arrStr); err != nil {
+			var description string
+			if err := survey.AskOne(&survey.Input{Message: "Deal description:"}, &description, survey.WithValidator(survey.Required)); err != nil {
 				return err
 			}
-			arr := map[string]float64{"100000": 100000, "150000": 150000, "300000": 300000}[arrStr]
-			var services []string
-			svcOpts := []string{"EC2", "EBS", "S3", "RDS", "Lambda", "EKS", "CloudFront"}
-			if err := survey.AskOne(&survey.MultiSelect{Message: "AWS services involved:", Options: svcOpts}, &services); err != nil {
+			var region string
+			regions := []string{"us-east-1", "us-west-2", "eu-west-1", "sa-east-1"}
+			if err := survey.AskOne(&survey.Select{Message: "Region:", Options: regions}, &region); err != nil {
+				return err
+			}
+			var arrStr string
+			if err := survey.AskOne(&survey.Input{Message: "ARR (USD):"}, &arrStr, survey.WithValidator(survey.Required)); err != nil {
+				return err
+			}
+			arr, err := strconv.ParseFloat(arrStr, 64)
+			if err != nil {
+
 				return err
 			}
 			var title string
@@ -53,8 +59,13 @@ func (MapCommand) Command() *cobra.Command {
 
 			plan := incentives.ComputeMAPFunding(arr)
 			pterm.Info.Printf("Tier %s with cap %.2f\n", plan.Tier, plan.CapAmount)
-			client := awspc.StubClient{}
-			id, err := client.CreateWorkloadEstimate(cmd.Context(), title)
+			client, err := awspc.New(cmd.Context())
+			if err != nil {
+				pterm.Warning.Printf("using stub AWS client: %v\n", err)
+				client = awspc.StubClient{}
+			}
+			id, err := client.CreateWorkloadEstimate(cmd.Context(), title, region, arr)
+
 			if err != nil {
 				return err
 			}
@@ -74,6 +85,11 @@ func (MapCommand) Command() *cobra.Command {
 				spin.Fail("xlsx")
 				return err
 			}
+			if err := render.MAPText(filepath.Join(outDir, "MAP.txt"), customer, description, region, arr, plan, link); err != nil {
+				spin.Fail("txt")
+				return err
+			}
+
 			spin.Success("artifacts written")
 			pterm.Success.Println("MAP artifacts generated in", outDir)
 			return nil

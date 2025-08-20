@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"text/template"
@@ -23,6 +24,7 @@ func MAPMarkdown(path string, plan types.FundingPlan, customer string) error {
 	data := map[string]interface{}{"Customer": customer, "Tier": plan.Tier, "Cap": plan.CapAmount}
 	return t.Execute(f, data)
 }
+
 // MAPXLSX renders a basic MAP.xlsx workbook.
 func MAPXLSX(path string, plan types.FundingPlan, customer string) error {
 	f := excelize.NewFile()
@@ -44,5 +46,19 @@ func MAPXLSX(path string, plan types.FundingPlan, customer string) error {
 		return err
 	}
 	return f.SaveAs(path)
+}
+
+// MAPText writes a text summary with relevant fields and AWS link.
+func MAPText(path, customer, description, region string, arr float64, plan types.FundingPlan, link string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = fmt.Fprintf(f, "Customer: %s\nDescription: %s\nRegion: %s\nARR: %.2f\nTier: %s\nFunding Cap: %.2f\nAWS Calc: %s\n", customer, description, region, arr, plan.Tier, plan.CapAmount, link)
+	return err
 }
 

@@ -7,9 +7,9 @@ var tiers = []struct {
 	limit float64
 	tier  string
 }{
-	{100000, "100k"},
-	{150000, "150k"},
+	{205000, "205k"},
 	{300000, "300k"},
+	{600000, "600k"},
 }
 
 // ComputeMAPFunding returns funding plan based on ARR.
@@ -22,7 +22,7 @@ func ComputeMAPFunding(arr float64) types.FundingPlan {
 			return plan
 		}
 	}
-	plan.Tier = ">300k"
+	plan.Tier = ">600k"
 	plan.CapAmount = arr * plan.CapPercent
 	return plan
 }

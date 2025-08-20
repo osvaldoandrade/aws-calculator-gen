@@ -9,7 +9,6 @@ import (
 // NewRoot returns the root command.
 func NewRoot() *cobra.Command {
 	factory := commands.NewFactory()
-  
 	factory.Register(commands.MapCommand{})
 
 	root := &cobra.Command{
@@ -22,9 +21,6 @@ Example:
 	}
 
 	if c, err := factory.Build("map"); err == nil {
-
-
-
 		root.AddCommand(c)
 	}
 	return root
