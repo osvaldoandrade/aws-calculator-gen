@@ -1,0 +1,14 @@
+project_name: seidor-aws-cli
+builds:
+  - main: ./cmd/seidor-aws-cli
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+archives:
+  - format: tar.gz
+    files:
+      - LICENSE
+      - README.md
+checksum:
+  name_template: checksums.txt
