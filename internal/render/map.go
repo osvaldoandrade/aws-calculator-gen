@@ -2,8 +2,9 @@ package render
 
 import (
 	"os"
+	"path/filepath"
 	"text/template"
-
+	"github.com/xuri/excelize/v2"
 	"github.com/example/seidor-aws-cli/internal/templates"
 	"github.com/example/seidor-aws-cli/pkg/types"
 )
@@ -22,3 +23,26 @@ func MAPMarkdown(path string, plan types.FundingPlan, customer string) error {
 	data := map[string]interface{}{"Customer": customer, "Tier": plan.Tier, "Cap": plan.CapAmount}
 	return t.Execute(f, data)
 }
+// MAPXLSX renders a basic MAP.xlsx workbook.
+func MAPXLSX(path string, plan types.FundingPlan, customer string) error {
+	f := excelize.NewFile()
+	sheets := []string{"Cover", "Request", "Workloads", "Budget", "Milestones"}
+	for i, s := range sheets {
+		if i == 0 {
+			f.SetSheetName("Sheet1", s)
+		} else {
+			f.NewSheet(s)
+		}
+	}
+	f.SetCellValue("Cover", "A1", "Customer")
+	f.SetCellValue("Cover", "B1", customer)
+	f.SetCellValue("Request", "A1", "ARR Tier")
+	f.SetCellValue("Request", "B1", plan.Tier)
+	f.SetCellValue("Request", "A2", "Funding Cap")
+	f.SetCellValue("Request", "B2", plan.CapAmount)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return f.SaveAs(path)
+}
+

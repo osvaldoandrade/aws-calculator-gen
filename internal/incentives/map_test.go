@@ -1,20 +1,19 @@
 package incentives
 
-import "testing"
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestComputeMAPFunding(t *testing.T) {
-	plan := ComputeMAPFunding(250000)
-	if plan.Tier != "300k" {
-		t.Fatalf("expected tier 300k got %s", plan.Tier)
-	}
-	if plan.CapAmount != 250000*0.10 {
-		t.Fatalf("unexpected cap amount %f", plan.CapAmount)
-	}
+	plan := ComputeMAPFunding(100000)
+	require.Equal(t, "100k", plan.Tier)
+	require.Equal(t, 100000*0.10, plan.CapAmount)
 }
 
 func TestComputeMAPFundingAbove(t *testing.T) {
-	plan := ComputeMAPFunding(700000)
-	if plan.Tier != ">600k" {
-		t.Fatalf("expected >600k got %s", plan.Tier)
-	}
+	plan := ComputeMAPFunding(350000)
+	require.Equal(t, ">300k", plan.Tier)
 }

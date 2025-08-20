@@ -2,14 +2,15 @@ package main
 
 import (
 	"context"
-	"log"
-
+	"os"
+	"github.com/pterm/pterm"
 	"github.com/example/seidor-aws-cli/internal/cli"
 )
 
 func main() {
 	root := cli.NewRoot()
 	if err := root.ExecuteContext(context.Background()); err != nil {
-		log.Fatal(err)
+		pterm.Error.Println(err)
+		os.Exit(1)
 	}
 }
