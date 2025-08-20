@@ -1,23 +1,20 @@
-name: CI & Release (Go + macOS DMG)
+name: CI, Tag & Release (Go + macOS DMG)
 
 on:
   push:
     branches: [ "main" ]
-    tags:
-      - "v*"             # cria release quando um tag vX.Y.Z for enviado
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
-  contents: write        # necessário para publicar a Release
+  contents: write   # necessário para criar tag e publicar release
 
 jobs:
   build-test:
     name: Build & Test (Linux)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -32,16 +29,20 @@ jobs:
         run: go test -v ./...
 
   release-macos:
-    name: Build Universal Binary, Package DMG & Release (macOS)
-    if: startsWith(github.ref, 'refs/tags/v')   # roda apenas em tags v*
+    name: Tag, Build Universal, DMG & Release (macOS)
+    # não roda em PRs; roda em push na main ou manual
+    if: github.event_name != 'pull_request'
     runs-on: macos-latest
     needs: build-test
     env:
       APP_NAME: seidor-aws-cli
       VOL_NAME: "Seidor AWS CLI"
-      MAIN_PKG: ./cmd/seidor-aws-cli            # ajuste se o main estiver em outro caminho
+      MAIN_PKG: ./cmd/seidor-aws-cli      # ajuste se o seu main estiver em outro path
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (full history for tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0       # precisamos de todos os tags
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -49,10 +50,36 @@ jobs:
           go-version: '1.22'
           cache: true
 
-      - name: Derive version from tag
+      - name: Compute next tag (patch bump)
+        id: version
         run: |
-          echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-          echo "TAG_NAME=${GITHUB_REF_NAME}" >> $GITHUB_ENV
+          git fetch --tags
+          LATEST_TAG="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+          if [ -z "$LATEST_TAG" ]; then
+            NEXT_TAG="v0.1.0"
+          else
+            V="${LATEST_TAG#v}"
+            IFS='.' read -r MA MI PA <<< "$V"
+            : "${MA:=0}" ; : "${MI:=1}" ; : "${PA:=0}"
+            PA=$((PA+1))
+            NEXT_TAG="v${MA}.${MI}.${PA}"
+          fi
+          echo "latest=$LATEST_TAG"   >> $GITHUB_OUTPUT
+          echo "next=$NEXT_TAG"       >> $GITHUB_OUTPUT
+          echo "VERSION=${NEXT_TAG#v}" >> $GITHUB_ENV
+          echo "TAG_NAME=$NEXT_TAG"    >> $GITHUB_ENV
+
+      - name: Create and push git tag
+        run: |
+          # Se o tag já existir no remoto, não recria
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG_NAME}$"; then
+            echo "Tag ${TAG_NAME} já existe em origin; seguindo adiante."
+          else
+            git config user.name  "github-actions"
+            git config user.email "github-actions@github.com"
+            git tag -a "${TAG_NAME}" -m "Release ${TAG_NAME}"
+            git push origin "${TAG_NAME}"
+          fi
 
       - name: Build darwin/amd64
         env:
@@ -106,8 +133,9 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.TAG_NAME }}
+          tag_name: ${{ env.TAG_NAME }}          # usa o tag recém-criado
           name: ${{ env.TAG_NAME }}
+          generate_release_notes: true
           files: |
             ${{ env.DMG_PATH }}
             ${{ env.DMG_PATH }}.sha256
