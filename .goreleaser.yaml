@@ -1,0 +1,9 @@
+project_name: seidor-aws-cli
+builds:
+  - id: seidor-aws-cli
+    main: ./cmd/seidor-aws-cli
+    binary: seidor-aws-cli
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+release:
+  disable: true
