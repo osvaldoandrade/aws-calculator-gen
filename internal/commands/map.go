@@ -2,15 +2,15 @@ package commands
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
 	"github.com/AlecAivazis/survey/v2"
-	"github.com/pterm/pterm"
-	"github.com/spf13/cobra"
 	"github.com/example/seidor-aws-cli/internal/awspc"
 	"github.com/example/seidor-aws-cli/internal/incentives"
 	"github.com/example/seidor-aws-cli/internal/render"
+	"github.com/pterm/pterm"
+	"github.com/spf13/cobra"
+	"os"
+	"path/filepath"
+	"strconv"
 )
 
 // MapCommand exposes MAP incentive helpers.
@@ -43,6 +43,11 @@ func (MapCommand) Command() *cobra.Command {
 			if err := survey.AskOne(&survey.Select{Message: "Region:", Options: regions}, &region); err != nil {
 				return err
 			}
+			var profile string
+			profiles := []string{"transactional", "lake"}
+			if err := survey.AskOne(&survey.Select{Message: "Workload profile:", Options: profiles}, &profile); err != nil {
+				return err
+			}
 			var arrStr string
 			if err := survey.AskOne(&survey.Input{Message: "ARR (USD):"}, &arrStr, survey.WithValidator(survey.Required)); err != nil {
 				return err
@@ -64,7 +69,7 @@ func (MapCommand) Command() *cobra.Command {
 				pterm.Warning.Printf("using stub AWS client: %v\n", err)
 				client = awspc.StubClient{}
 			}
-			id, err := client.CreateWorkloadEstimate(cmd.Context(), title, region, arr)
+			id, err := client.CreateWorkloadEstimate(cmd.Context(), title, region, profile, arr)
 
 			if err != nil {
 				return err
