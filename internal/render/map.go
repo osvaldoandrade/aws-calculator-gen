@@ -4,9 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"text/template"
-
 	"github.com/xuri/excelize/v2"
-
 	"github.com/example/seidor-aws-cli/internal/templates"
 	"github.com/example/seidor-aws-cli/pkg/types"
 )
@@ -25,7 +23,6 @@ func MAPMarkdown(path string, plan types.FundingPlan, customer string) error {
 	data := map[string]interface{}{"Customer": customer, "Tier": plan.Tier, "Cap": plan.CapAmount}
 	return t.Execute(f, data)
 }
-
 // MAPXLSX renders a basic MAP.xlsx workbook.
 func MAPXLSX(path string, plan types.FundingPlan, customer string) error {
 	f := excelize.NewFile()
@@ -48,3 +45,4 @@ func MAPXLSX(path string, plan types.FundingPlan, customer string) error {
 	}
 	return f.SaveAs(path)
 }
+
