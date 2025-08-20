@@ -5,11 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
-
 	"github.com/example/seidor-aws-cli/internal/awspc"
 	"github.com/example/seidor-aws-cli/internal/incentives"
 	"github.com/example/seidor-aws-cli/internal/render"
@@ -51,6 +49,7 @@ func (MapCommand) Command() *cobra.Command {
 			}
 			arr, err := strconv.ParseFloat(arrStr, 64)
 			if err != nil {
+
 				return err
 			}
 			var title string
@@ -66,6 +65,7 @@ func (MapCommand) Command() *cobra.Command {
 				client = awspc.StubClient{}
 			}
 			id, err := client.CreateWorkloadEstimate(cmd.Context(), title, region, arr)
+
 			if err != nil {
 				return err
 			}
@@ -89,6 +89,7 @@ func (MapCommand) Command() *cobra.Command {
 				spin.Fail("txt")
 				return err
 			}
+
 			spin.Success("artifacts written")
 			pterm.Success.Println("MAP artifacts generated in", outDir)
 			return nil

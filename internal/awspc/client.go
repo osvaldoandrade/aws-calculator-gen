@@ -52,10 +52,12 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region st
 		},
 	})
 	return id, nil
+
 }
 
 // StubClient implements Client without calling AWS.
 type StubClient struct{}
+
 
 func (StubClient) CreateWorkloadEstimate(ctx context.Context, title, region string, amount float64) (string, error) {
 	return "stub-id", nil

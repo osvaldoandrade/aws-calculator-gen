@@ -1,0 +1,306 @@
+name: CI, Tag & Release (macOS DMG drag, Linux RPM/DEB incl. Raspberry Pi)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_NAME: seidor-aws-cli
+  APP_DISPLAY: "Seidor AWS CLI"
+  BUNDLE_ID: com.seidor.awscli
+  VOL_NAME: "Seidor AWS CLI"
+  MAIN_PKG: ./cmd/seidor-aws-cli
+
+jobs:
+  build-test:
+    name: Build & Test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with: { go-version: '1.22', cache: true }
+      - name: Build
+        run: go build -v ./...
+      - name: Test
+        run: go test -v ./...
+
+  tag:
+    name: Compute & Push Tag
+    runs-on: ubuntu-latest
+    needs: build-test
+    outputs:
+      TAG_NAME: ${{ steps.version.outputs.tag }}
+      VERSION: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: version
+        name: Compute next tag (patch bump)
+        shell: bash
+        run: |
+          git fetch --tags
+          LATEST_TAG="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+          if [ -z "$LATEST_TAG" ]; then NEXT_TAG="v0.1.0"; else
+            V="${LATEST_TAG#v}"; IFS='.' read -r MA MI PA <<< "$V"
+            : "${MA:=0}"; : "${MI:=1}"; : "${PA:=0}"; PA=$((PA+1))
+            NEXT_TAG="v${MA}.${MI}.${PA}"
+          fi
+          echo "tag=${NEXT_TAG}"       >> "$GITHUB_OUTPUT"
+          echo "version=${NEXT_TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Create and push git tag
+        shell: bash
+        run: |
+          TAG_NAME="${{ steps.version.outputs.tag }}"
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG_NAME}$"; then
+            echo "Tag ${TAG_NAME} já existe; seguindo."
+          else
+            git config user.name  "github-actions"
+            git config user.email "github-actions@github.com"
+            git tag -a "${TAG_NAME}" -m "Release ${TAG_NAME}"
+            git push origin "${TAG_NAME}"
+          fi
+
+  release-macos:
+    name: macOS • DMG drag-to-Applications (Universal, ad-hoc signed, /usr/local/bin)
+    runs-on: macos-latest
+    needs: tag
+    env:
+      VERSION: ${{ needs.tag.outputs.VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with: { go-version: '1.22', cache: true }
+
+      # Build universal (arm64 + amd64)
+      - name: Build darwin/amd64
+        env: { GOOS: darwin, GOARCH: amd64, CGO_ENABLED: 0 }
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/${APP_NAME}_amd64 ${MAIN_PKG}
+      - name: Build darwin/arm64
+        env: { GOOS: darwin, GOARCH: arm64, CGO_ENABLED: 0 }
+        run: |
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/${APP_NAME}_arm64 ${MAIN_PKG}
+      - name: Create universal binary (lipo)
+        run: |
+          lipo -create -output dist/${APP_NAME} dist/${APP_NAME}_amd64 dist/${APP_NAME}_arm64
+          chmod +x dist/${APP_NAME}
+          file dist/${APP_NAME}
+
+      # Build proper .app bundle (launcher + Info.plist + icon)
+      - name: Create .app bundle (installs to /usr/local/bin)
+        run: |
+          APP="${APP_DISPLAY}.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+
+          # Info.plist
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key><string>en</string>
+            <key>CFBundleDisplayName</key><string>${APP_DISPLAY}</string>
+            <key>CFBundleExecutable</key><string>launcher</string>
+            <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
+            <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+            <key>CFBundleName</key><string>${APP_DISPLAY}</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+            <key>CFBundleVersion</key><string>${VERSION}</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+            <key>CFBundleIconFile</key><string>SeidorAWSCLI.icns</string>
+          </dict>
+          </plist>
+          PLIST
+
+          # Launcher (bash) — instala SEMPRE em /usr/local/bin
+          cat > "$APP/Contents/MacOS/launcher" <<'SH'
+          #!/bin/bash
+          set -euo pipefail
+          BIN_SRC="$(dirname "$0")/../Resources/seidor-aws-cli"
+          TARGET="/usr/local/bin"
+          /usr/bin/osascript <<OSA
+          do shell script "mkdir -p '${TARGET}' && install -m 0755 '${BIN_SRC}' '${TARGET}/seidor-aws-cli' && xattr -d com.apple.quarantine '${TARGET}/seidor-aws-cli' || true" with administrator privileges
+          OSA
+          /usr/bin/osascript -e 'display dialog "Seidor AWS CLI instalado em /usr/local/bin." buttons {"OK"} default button 1 with icon note'
+          SH
+          chmod +x "$APP/Contents/MacOS/launcher"
+
+          # Binário universal embutido
+          cp dist/${APP_NAME} "$APP/Contents/Resources/seidor-aws-cli"
+
+          # Ícone (opcional)
+          if [ -f assets/icon.png ]; then
+            mkdir -p icon.iconset
+            for s in 16 32 64 128 256 512 1024; do /usr/bin/sips -z $s $s assets/icon.png --out icon.iconset/icon_${s}x${s}.png >/dev/null; done
+            /usr/bin/iconutil -c icns icon.iconset -o "$APP/Contents/Resources/SeidorAWSCLI.icns"
+          fi
+
+      - name: Ad-hoc codesign .app
+        run: |
+          APP="${APP_DISPLAY}.app"
+          codesign --force --deep -s - --timestamp=none "$APP" || true
+          codesign -dv "$APP" || true
+
+      - name: Create DMG (drag-to-Applications)
+        run: |
+          APP="${APP_DISPLAY}.app"
+          mkdir -p dmgroot
+          cp -R "$APP" dmgroot/
+          ln -s /Applications dmgroot/Applications
+          DMG="dist/${APP_NAME}_${VERSION}_macOS.dmg"
+          hdiutil create -volname "${VOL_NAME}" -srcfolder dmgroot -ov -format UDZO "$DMG"
+          echo "DMG_PATH=$DMG" >> $GITHUB_ENV
+
+      - name: Checksums + Upload
+        run: |
+          shasum -a 256 "$DMG_PATH" > "${DMG_PATH}.sha256"
+          cat "${DMG_PATH}.sha256"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.tag.outputs.TAG_NAME }}
+          name: ${{ needs.tag.outputs.TAG_NAME }}
+          generate_release_notes: true
+          files: |
+            ${{ env.DMG_PATH }}
+            ${{ env.DMG_PATH }}.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-linux-rpm:
+    name: Linux • RPM (x86_64 & aarch64)
+    runs-on: ubuntu-latest
+    needs: tag
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with: { go-version: '1.22', cache: true }
+
+      - name: Build linux/amd64
+        env: { GOOS: linux, GOARCH: amd64, CGO_ENABLED: 0 }
+        run: |
+          mkdir -p dist pkg/linux/amd64
+          go build -trimpath -ldflags="-s -w -X main.version=${{ needs.tag.outputs.VERSION }}" -o dist/${APP_NAME}_linux_amd64 ${MAIN_PKG}
+          cp dist/${APP_NAME}_linux_amd64 pkg/linux/amd64/${APP_NAME}
+      - name: Build linux/arm64
+        env: { GOOS: linux, GOARCH: arm64, CGO_ENABLED: 0 }
+        run: |
+          mkdir -p pkg/linux/arm64
+          go build -trimpath -ldflags="-s -w -X main.version=${{ needs.tag.outputs.VERSION }}" -o dist/${APP_NAME}_linux_arm64 ${MAIN_PKG}
+          cp dist/${APP_NAME}_linux_arm64 pkg/linux/arm64/${APP_NAME}
+
+      - name: Install fpm
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-dev rubygems rpm
+          sudo gem install --no-document fpm
+
+      - name: Package RPMs & Upload
+        run: |
+          fpm -s dir -t rpm -n ${APP_NAME} -v ${{ needs.tag.outputs.VERSION }} -a x86_64 --license MIT \
+            --description "${APP_DISPLAY}" --vendor "${{ github.repository_owner }}" \
+            --url "https://github.com/${{ github.repository }}" \
+            pkg/linux/amd64/${APP_NAME}=/usr/local/bin/${APP_NAME}
+          fpm -s dir -t rpm -n ${APP_NAME} -v ${{ needs.tag.outputs.VERSION }} -a aarch64 --license MIT \
+            --description "${APP_DISPLAY}" --vendor "${{ github.repository_owner }}" \
+            --url "https://github.com/${{ github.repository }}" \
+            pkg/linux/arm64/${APP_NAME}=/usr/local/bin/${APP_NAME}
+          mv ${APP_NAME}-${{ needs.tag.outputs.VERSION }}-1.x86_64.rpm dist/${APP_NAME}_${{ needs.tag.outputs.VERSION }}_linux_x86_64.rpm
+          mv ${APP_NAME}-${{ needs.tag.outputs.VERSION }}-1.aarch64.rpm dist/${APP_NAME}_${{ needs.tag.outputs.VERSION }}_linux_aarch64.rpm
+          (cd dist && shasum -a 256 *.rpm > SHA256SUMS.rpm.txt)
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.tag.outputs.TAG_NAME }}
+          name: ${{ needs.tag.outputs.TAG_NAME }}
+          files: |
+            dist/${{ env.APP_NAME }}_${{ needs.tag.outputs.VERSION }}_linux_x86_64.rpm
+            dist/${{ env.APP_NAME }}_${{ needs.tag.outputs.VERSION }}_linux_aarch64.rpm
+            dist/SHA256SUMS.rpm.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-linux-deb:
+    name: Linux • DEB (amd64, arm64, armhf / Raspberry Pi)
+    runs-on: ubuntu-latest
+    needs: tag
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with: { go-version: '1.22', cache: true }
+
+      - name: Build linux/amd64
+        env: { GOOS: linux, GOARCH: amd64, CGO_ENABLED: 0 }
+        run: |
+          mkdir -p dist pkg/deb/amd64
+          go build -trimpath -ldflags="-s -w -X main.version=${{ needs.tag.outputs.VERSION }}" -o dist/${APP_NAME}_linux_amd64 ${MAIN_PKG}
+          cp dist/${APP_NAME}_linux_amd64 pkg/deb/amd64/${APP_NAME}
+      - name: Build linux/arm64
+        env: { GOOS: linux, GOARCH: arm64, CGO_ENABLED: 0 }
+        run: |
+          mkdir -p pkg/deb/arm64
+          go build -trimpath -ldflags="-s -w -X main.version=${{ needs.tag.outputs.VERSION }}" -o dist/${APP_NAME}_linux_arm64 ${MAIN_PKG}
+          cp dist/${APP_NAME}_linux_arm64 pkg/deb/arm64/${APP_NAME}
+      - name: Build linux/armhf (Raspberry Pi)
+        env:
+          GOOS: linux
+          GOARCH: arm
+          GOARM: "7"
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p pkg/deb/armhf
+          go build -trimpath -ldflags="-s -w -X main.version=${{ needs.tag.outputs.VERSION }}" -o dist/${APP_NAME}_linux_armhf ${MAIN_PKG}
+          cp dist/${APP_NAME}_linux_armhf pkg/deb/armhf/${APP_NAME}
+
+      - name: Install fpm
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-dev rubygems fakeroot
+          sudo gem install --no-document fpm
+
+      - name: Package DEBs & Upload
+        run: |
+          mkdir -p dist
+          fpm -s dir -t deb -n ${APP_NAME} -v ${{ needs.tag.outputs.VERSION }} -a amd64  \
+            --deb-no-default-config-files --license MIT \
+            --description "${APP_DISPLAY}" --vendor "${{ github.repository_owner }}" \
+            --url "https://github.com/${{ github.repository }}" \
+            pkg/deb/amd64/${APP_NAME}=/usr/local/bin/${APP_NAME}
+          fpm -s dir -t deb -n ${APP_NAME} -v ${{ needs.tag.outputs.VERSION }} -a arm64  \
+            --deb-no-default-config-files --license MIT \
+            --description "${APP_DISPLAY}" --vendor "${{ github.repository_owner }}" \
+            --url "https://github.com/${{ github.repository }}" \
+            pkg/deb/arm64/${APP_NAME}=/usr/local/bin/${APP_NAME}
+          fpm -s dir -t deb -n ${APP_NAME} -v ${{ needs.tag.outputs.VERSION }} -a armhf \
+            --deb-no-default-config-files --license MIT \
+            --description "${APP_DISPLAY}" --vendor "${{ github.repository_owner }}" \
+            --url "https://github.com/${{ github.repository }}" \
+            pkg/deb/armhf/${APP_NAME}=/usr/local/bin/${APP_NAME}
+          mv ${APP_NAME}_${{ needs.tag.outputs.VERSION }}_amd64.deb dist/${APP_NAME}_${{ needs.tag.outputs.VERSION }}_linux_amd64.deb
+          mv ${APP_NAME}_${{ needs.tag.outputs.VERSION }}_arm64.deb dist/${APP_NAME}_${{ needs.tag.outputs.VERSION }}_linux_arm64.deb
+          mv ${APP_NAME}_${{ needs.tag.outputs.VERSION }}_armhf.deb dist/${APP_NAME}_${{ needs.tag.outputs.VERSION }}_raspbian_armhf.deb
+          (cd dist && shasum -a 256 *.deb > SHA256SUMS.deb.txt)
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.tag.outputs.TAG_NAME }}
+          name: ${{ needs.tag.outputs.TAG_NAME }}
+          files: |
+            dist/${{ env.APP_NAME }}_${{ needs.tag.outputs.VERSION }}_linux_amd64.deb
+            dist/${{ env.APP_NAME }}_${{ needs.tag.outputs.VERSION }}_linux_arm64.deb
+            dist/${{ env.APP_NAME }}_${{ needs.tag.outputs.VERSION }}_raspbian_armhf.deb
+            dist/SHA256SUMS.deb.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

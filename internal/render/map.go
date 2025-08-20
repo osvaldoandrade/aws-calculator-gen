@@ -5,9 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"text/template"
-
 	"github.com/xuri/excelize/v2"
-
 	"github.com/example/seidor-aws-cli/internal/templates"
 	"github.com/example/seidor-aws-cli/pkg/types"
 )
@@ -63,3 +61,4 @@ func MAPText(path, customer, description, region string, arr float64, plan types
 	_, err = fmt.Fprintf(f, "Customer: %s\nDescription: %s\nRegion: %s\nARR: %.2f\nTier: %s\nFunding Cap: %.2f\nAWS Calc: %s\n", customer, description, region, arr, plan.Tier, plan.CapAmount, link)
 	return err
 }
+

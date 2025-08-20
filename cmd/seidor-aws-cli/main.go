@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"os"
-
 	"github.com/pterm/pterm"
-
 	"github.com/example/seidor-aws-cli/internal/cli"
 )
 
