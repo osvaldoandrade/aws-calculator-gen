@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	bcm "github.com/aws/aws-sdk-go-v2/service/bcmpricingcalculator"
 	bcmtypes "github.com/aws/aws-sdk-go-v2/service/bcmpricingcalculator/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
 // Client defines subset of AWS Pricing Calculator API used.
@@ -23,12 +24,18 @@ func New(ctx context.Context) (Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &AWSClient{svc: bcm.NewFromConfig(cfg)}, nil
+	stsClient := sts.NewFromConfig(cfg)
+	ident, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		return nil, err
+	}
+	return &AWSClient{svc: bcm.NewFromConfig(cfg), accountID: aws.ToString(ident.Account)}, nil
 }
 
 // AWSClient calls the real AWS Pricing Calculator API.
 type AWSClient struct {
-	svc *bcm.Client
+	svc       *bcm.Client
+	accountID string
 }
 
 // CreateWorkloadEstimate creates a workload estimate and several usage lines.
@@ -54,7 +61,7 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, p
 			continue
 		}
 		lines[i].Key = aws.String(strconv.Itoa(len(usage) + 1))
-		lines[i].UsageAccountId = aws.String("123456789012")
+		lines[i].UsageAccountId = aws.String(c.accountID)
 		usage = append(usage, lines[i].BatchCreateWorkloadEstimateUsageEntry)
 	}
 	if len(usage) > 0 {
