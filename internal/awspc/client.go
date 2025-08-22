@@ -118,6 +118,14 @@ func defaultEntries(prefix, profile string) []usageLine {
 			},
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+					ServiceCode: aws.String("AmazonS3"),
+					UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
+					Operation:   aws.String("PutObject"),
+				},
+				price: 0.023, // per GB-month
+			},
+			{
+				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 					ServiceCode: aws.String("AmazonRedshift"),
 					UsageType:   aws.String(prefix + "-Redshift:ServerlessUsage"),
 					Operation:   aws.String("CreateWorkgroup"),
@@ -139,6 +147,15 @@ func defaultEntries(prefix, profile string) []usageLine {
 					Operation:   aws.String("RunQuery"),
 				},
 				price: 5.0, // per TB scanned
+			},
+			{
+				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+					ServiceCode: aws.String("AmazonAthena"),
+					UsageType:   aws.String(prefix + "-DMLQueries"),
+					Operation:   aws.String("RunQuery"),
+					Amount:      aws.Float64(1000),
+				},
+				price: 0, // per query (no cost)
 			},
 		}
 	}
@@ -185,6 +202,9 @@ func assignUsage(lines []usageLine, amount float64) {
 	}
 	remaining := amount
 	for i := range lines {
+		if lines[i].price <= 0 {
+			continue
+		}
 		if remaining >= lines[i].price {
 			lines[i].Amount = aws.Float64(1)
 			remaining -= lines[i].price
@@ -192,7 +212,7 @@ func assignUsage(lines []usageLine, amount float64) {
 	}
 	sort.Slice(lines, func(i, j int) bool { return lines[i].price > lines[j].price })
 	for i := range lines {
-		if remaining < lines[i].price {
+		if lines[i].price <= 0 || remaining < lines[i].price {
 			continue
 		}
 		units := math.Floor(remaining / lines[i].price)
