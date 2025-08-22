@@ -2,8 +2,6 @@ package awspc
 
 import (
 	"context"
-	"math"
-	"sort"
 	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -114,7 +112,6 @@ func defaultEntries(prefix, profile string) []usageLine {
 					UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
 					Operation:   aws.String("PutObject"),
 				},
-
 				price: 0.023, // per GB-month
 			},
 			{
@@ -146,9 +143,9 @@ func defaultEntries(prefix, profile string) []usageLine {
 					ServiceCode: aws.String("AmazonAthena"),
 					UsageType:   aws.String(prefix + "-DMLQueries"),
 					Operation:   aws.String("RunQuery"),
-					Amount:      aws.Float64(1000),
 				},
-				price: 0, // per query (no cost)
+				price: 0.0005, // per DML query
+
 			},
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
@@ -166,14 +163,12 @@ func defaultEntries(prefix, profile string) []usageLine {
 				},
 				price: 0.096, // per hour
 			},
-
 		}
 	}
 	// transactional profile
 	return []usageLine{
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
-
 
 				ServiceCode: aws.String("AmazonRDS"),
 				UsageType:   aws.String(prefix + "-InstanceUsage:db.m7g.large"),
@@ -228,36 +223,21 @@ func assignUsage(lines []usageLine, amount float64) {
 	if amount <= 0 {
 		return
 	}
-	remaining := amount
+	var priced []int
 	for i := range lines {
-		if lines[i].price <= 0 {
-			continue
-		}
-		if remaining >= lines[i].price {
-			lines[i].Amount = aws.Float64(1)
-			remaining -= lines[i].price
+		if lines[i].price > 0 {
+			priced = append(priced, i)
 		}
 	}
-	sort.Slice(lines, func(i, j int) bool { return lines[i].price > lines[j].price })
-	for i := range lines {
-		if lines[i].price <= 0 || remaining < lines[i].price {
-			continue
-		}
-		units := math.Floor(remaining / lines[i].price)
+	if len(priced) == 0 {
+		return
+
+	}
+	perLine := amount / float64(len(priced))
+	for _, i := range priced {
+		units := perLine / lines[i].price
 		if units > 0 {
-			if lines[i].Amount == nil {
-				lines[i].Amount = aws.Float64(units)
-			} else {
-				*lines[i].Amount += units
-			}
-			remaining -= units * lines[i].price
-		}
-	}
-	if remaining > 0 {
-		if lines[0].Amount == nil {
-			lines[0].Amount = aws.Float64(remaining / lines[0].price)
-		} else {
-			*lines[0].Amount += remaining / lines[0].price
+			lines[i].Amount = aws.Float64(units)
 		}
 	}
 }

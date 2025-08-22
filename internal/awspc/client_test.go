@@ -1,6 +1,9 @@
 package awspc
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestAssignUsage(t *testing.T) {
 	lines := []usageLine{
@@ -9,13 +12,21 @@ func TestAssignUsage(t *testing.T) {
 		{price: 1},
 	}
 	assignUsage(lines, 26)
-	if lines[0].Amount == nil || *lines[0].Amount != 2 {
-		t.Fatalf("expected first line 2 units, got %v", lines[0].Amount)
+	total := 0.0
+	for i := range lines {
+		if lines[i].Amount == nil {
+			t.Fatalf("expected amount for line %d", i)
+		}
+		total += *lines[i].Amount * lines[i].price
 	}
-	if lines[1].Amount == nil || *lines[1].Amount != 1 {
-		t.Fatalf("expected second line 1 unit, got %v", lines[1].Amount)
+	if math.Abs(total-26) > 1e-6 {
+		t.Fatalf("expected total cost 26, got %f", total)
 	}
-	if lines[2].Amount == nil || *lines[2].Amount != 1 {
-		t.Fatalf("expected third line 1 unit, got %v", lines[2].Amount)
+	expected := 26.0 / 3
+	for i := range lines {
+		cost := *lines[i].Amount * lines[i].price
+		if math.Abs(cost-expected) > 1e-6 {
+			t.Fatalf("line %d cost %f, expected %f", i, cost, expected)
+		}
 	}
 }
