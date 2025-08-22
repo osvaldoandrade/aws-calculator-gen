@@ -14,7 +14,7 @@ func Load() (*viper.Viper, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir = filepath.Join(dir, "seidor-aws-cli")
+	dir = filepath.Join(dir, "seidor-cloud")
 	os.MkdirAll(dir, 0o755)
 	v.AddConfigPath(dir)
 	v.SetConfigName("config")
