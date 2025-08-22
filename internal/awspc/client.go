@@ -114,6 +114,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 					UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
 					Operation:   aws.String("PutObject"),
 				},
+
 				price: 0.023, // per GB-month
 			},
 			{
@@ -165,12 +166,15 @@ func defaultEntries(prefix, profile string) []usageLine {
 				},
 				price: 0.096, // per hour
 			},
+
 		}
 	}
 	// transactional profile
 	return []usageLine{
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+
+
 				ServiceCode: aws.String("AmazonRDS"),
 				UsageType:   aws.String(prefix + "-InstanceUsage:db.m7g.large"),
 				Operation:   aws.String("CreateDBInstance"),
