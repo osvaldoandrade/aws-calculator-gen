@@ -252,7 +252,12 @@ func assignUsage(lines []usageLine, amount float64) {
 				lines[i].Amount = aws.Float64(units)
 				total += units * lines[i].price
 			}
+
 		}
+		services[svc] = append(services[svc], i)
+	}
+	if len(services) == 0 {
+		return
 	}
 	if diff := amount - total; math.Abs(diff) > 1e-6 {
 		for i := range lines {
