@@ -49,8 +49,8 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, p
 	}
 	id := aws.ToString(out.Id)
 
-	prefix := regionPrefix(region)
-	lines := defaultEntries(prefix, profile)
+	_ = region
+	lines := defaultEntries(profile)
 	if len(lines) == 0 {
 		return id, nil
 	}
@@ -134,33 +134,18 @@ func (StubClient) CreateWorkloadEstimate(ctx context.Context, title, region, pro
 	return "stub-id", nil
 }
 
-func regionPrefix(region string) string {
-	switch region {
-	case "us-east-1":
-		return "USE1"
-	case "us-west-2":
-		return "USW2"
-	case "eu-west-1":
-		return "EUW1"
-	case "sa-east-1":
-		return "SAE1"
-	default:
-		return "USE1"
-	}
-}
-
 type usageLine struct {
 	bcmtypes.BatchCreateWorkloadEstimateUsageEntry
 	price float64
 }
 
-func defaultEntries(prefix, profile string) []usageLine {
+func defaultEntries(profile string) []usageLine {
 	if profile == "lake" {
 		return []usageLine{
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 					ServiceCode: aws.String("AmazonS3"),
-					UsageType:   aws.String(prefix + "-Requests-Tier1"),
+					UsageType:   aws.String("Requests-Tier1"),
 					Operation:   aws.String("PutObject"),
 				},
 				// Tier 1 S3 requests are $0.005 per 1,000 requests.
@@ -170,7 +155,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 					ServiceCode: aws.String("AmazonRedshift"),
-					UsageType:   aws.String(prefix + "-Redshift:ServerlessUsage"),
+					UsageType:   aws.String("Redshift:ServerlessUsage"),
 					Operation:   aws.String("CreateWorkgroup"),
 				},
 				price: 0.5, // per RPU-hour
@@ -178,7 +163,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 					ServiceCode: aws.String("AWSGlue"),
-					UsageType:   aws.String(prefix + "-ETL-Flex-DPU-Hour"),
+					UsageType:   aws.String("ETL-Flex-DPU-Hour"),
 					Operation:   aws.String("StartJobRun"),
 				},
 				price: 0.44, // per DPU-hour
@@ -186,7 +171,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 					ServiceCode: aws.String("AmazonAthena"),
-					UsageType:   aws.String(prefix + "-DataScannedInTB"),
+					UsageType:   aws.String("DataScannedInTB"),
 					Operation:   aws.String("RunQuery"),
 				},
 				price: 5.0, // per TB scanned
@@ -194,7 +179,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 					ServiceCode: aws.String("AmazonAthena"),
-					UsageType:   aws.String(prefix + "-DMLQueries"),
+					UsageType:   aws.String("DMLQueries"),
 					Operation:   aws.String("RunQuery"),
 				},
 				price: 0.0005, // per DML query
@@ -202,7 +187,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 					ServiceCode: aws.String("AWSLambda"),
-					UsageType:   aws.String(prefix + "-Lambda-GB-Second"),
+					UsageType:   aws.String("Lambda-GB-Second"),
 					Operation:   aws.String("Invoke"),
 				},
 				price: 0.0000166667, // per GB-second
@@ -210,7 +195,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 					ServiceCode: aws.String("AmazonEC2"),
-					UsageType:   aws.String(prefix + "-BoxUsage:m7g.large"),
+					UsageType:   aws.String("BoxUsage:m7g.large"),
 					Operation:   aws.String("RunInstances"),
 				},
 				price: 0.096, // per hour
@@ -222,7 +207,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 				ServiceCode: aws.String("AmazonRDS"),
-				UsageType:   aws.String(prefix + "-InstanceUsage:db.m7g.large"),
+				UsageType:   aws.String("InstanceUsage:db.m7g.large"),
 				Operation:   aws.String("CreateDBInstance"),
 			},
 			price: 0.206, // per hour
@@ -230,7 +215,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 				ServiceCode: aws.String("AWSLambda"),
-				UsageType:   aws.String(prefix + "-Lambda-GB-Second"),
+				UsageType:   aws.String("Lambda-GB-Second"),
 				Operation:   aws.String("Invoke"),
 			},
 			price: 0.0000166667, // per GB-second
@@ -238,7 +223,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 				ServiceCode: aws.String("AWSEvents"),
-				UsageType:   aws.String(prefix + "-Event-64K-Chunks"),
+				UsageType:   aws.String("Event-64K-Chunks"),
 				Operation:   aws.String("PutEvents"),
 			},
 			price: 0.000001, // per 64KB event chunk
@@ -246,7 +231,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 				ServiceCode: aws.String("AmazonStates"),
-				UsageType:   aws.String(prefix + "-StateTransition"),
+				UsageType:   aws.String("StateTransition"),
 				Operation:   aws.String("StartExecution"),
 			},
 			price: 0.000025, // per state transition
@@ -254,7 +239,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 				ServiceCode: aws.String("AmazonElastiCache"),
-				UsageType:   aws.String(prefix + "-NodeUsage:cache.t4g.small"),
+				UsageType:   aws.String("NodeUsage:cache.t4g.small"),
 				Operation:   aws.String("CreateCacheCluster"),
 			},
 			price: 0.034, // per node hour
@@ -262,7 +247,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 				ServiceCode: aws.String("AmazonS3"),
-				UsageType:   aws.String(prefix + "-Requests-Tier1"),
+				UsageType:   aws.String("Requests-Tier1"),
 				Operation:   aws.String("PutObject"),
 			},
 			// Tier 1 S3 requests cost $0.005 per 1,000 requests.
