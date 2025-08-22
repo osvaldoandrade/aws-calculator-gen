@@ -54,11 +54,10 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, p
 		return id, nil
 	}
 
-	var prevKeys []string
+	var prevIDs []string
 	for attempt := 0; attempt < 5; attempt++ {
 		assignUsage(lines, amount)
 		var usage []bcmtypes.BatchCreateWorkloadEstimateUsageEntry
-		var keys []string
 		for i := range lines {
 			if lines[i].Amount == nil || *lines[i].Amount == 0 {
 				continue
@@ -71,27 +70,32 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, p
 			fmt.Printf("adding service %s cost %.2f\n", svc, cost)
 			lines[i].Key = aws.String(strconv.Itoa(len(usage) + 1))
 			lines[i].UsageAccountId = aws.String(c.accountID)
-			keys = append(keys, aws.ToString(lines[i].Key))
 			usage = append(usage, lines[i].BatchCreateWorkloadEstimateUsageEntry)
 		}
 
-		if attempt > 0 && len(prevKeys) > 0 {
+		if len(prevIDs) > 0 {
 			_, err = c.svc.BatchDeleteWorkloadEstimateUsage(ctx, &bcm.BatchDeleteWorkloadEstimateUsageInput{
 				WorkloadEstimateId: aws.String(id),
-				Ids:                prevKeys,
+				Ids:                prevIDs,
 			})
 			if err != nil {
 				return "", err
 			}
 		}
 
+		prevIDs = prevIDs[:0]
 		if len(usage) > 0 {
-			_, err = c.svc.BatchCreateWorkloadEstimateUsage(ctx, &bcm.BatchCreateWorkloadEstimateUsageInput{
+			out, err2 := c.svc.BatchCreateWorkloadEstimateUsage(ctx, &bcm.BatchCreateWorkloadEstimateUsageInput{
 				WorkloadEstimateId: aws.String(id),
 				Usage:              usage,
 			})
-			if err != nil {
-				return "", err
+			if err2 != nil {
+				return "", err2
+			}
+			for _, r := range out.Items {
+				if r.Id != nil {
+					prevIDs = append(prevIDs, aws.ToString(r.Id))
+				}
 			}
 		}
 
@@ -105,7 +109,6 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, p
 			break
 		}
 		amount += diff
-		prevKeys = keys
 	}
 	return id, nil
 }
