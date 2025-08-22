@@ -114,7 +114,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 					UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
 					Operation:   aws.String("CreateTable"),
 				},
-				price: 0.25 / (730 * 1e9), // $0.25 per GB-month
+				price: 0.25, // per GB-month
 			},
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
@@ -158,7 +158,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 				UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
 				Operation:   aws.String("PutObject"),
 			},
-			price: 0.023 / (730 * 1e9), // $0.023 per GB-month
+			price: 0.023, // per GB-month
 		},
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
