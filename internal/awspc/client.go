@@ -3,7 +3,6 @@ package awspc
 import (
 	"context"
 	"math"
-	"sort"
 	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -110,11 +109,13 @@ func defaultEntries(prefix, profile string) []usageLine {
 		return []usageLine{
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
-					ServiceCode: aws.String("AmazonDynamoDB"),
+					ServiceCode: aws.String("AmazonS3"),
 					UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
-					Operation:   aws.String("CreateTable"),
+					Operation:   aws.String("PutObject"),
 				},
-				price: 0.25 / (730 * 1e9), // $0.25 per GB-month
+				// Standard storage is $0.023 per GB-month. Convert to the
+				// price per Byte-hour expected by the Pricing Calculator.
+				price: 0.023 / (1024 * 1024 * 1024) / 730,
 			},
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
@@ -140,26 +141,34 @@ func defaultEntries(prefix, profile string) []usageLine {
 				},
 				price: 5.0, // per TB scanned
 			},
+			{
+				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+					ServiceCode: aws.String("AmazonAthena"),
+					UsageType:   aws.String(prefix + "-DMLQueries"),
+					Operation:   aws.String("RunQuery"),
+				},
+				price: 0.0005, // per DML query
+			},
+			{
+				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+					ServiceCode: aws.String("AWSLambda"),
+					UsageType:   aws.String(prefix + "-Lambda-GB-Second"),
+					Operation:   aws.String("Invoke"),
+				},
+				price: 0.0000166667, // per GB-second
+			},
+			{
+				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+					ServiceCode: aws.String("AmazonEC2"),
+					UsageType:   aws.String(prefix + "-BoxUsage:m7g.large"),
+					Operation:   aws.String("RunInstances"),
+				},
+				price: 0.096, // per hour
+			},
 		}
 	}
-	// default transactional profile
+	// transactional profile
 	return []usageLine{
-		{
-			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
-				ServiceCode: aws.String("AmazonEC2"),
-				UsageType:   aws.String(prefix + "-BoxUsage:m7g.large"),
-				Operation:   aws.String("RunInstances"),
-			},
-			price: 0.096, // per hour
-		},
-		{
-			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
-				ServiceCode: aws.String("AmazonS3"),
-				UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
-				Operation:   aws.String("PutObject"),
-			},
-			price: 0.023 / (730 * 1e9), // $0.023 per GB-month
-		},
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 				ServiceCode: aws.String("AmazonRDS"),
@@ -176,6 +185,39 @@ func defaultEntries(prefix, profile string) []usageLine {
 			},
 			price: 0.0000166667, // per GB-second
 		},
+		{
+			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+				ServiceCode: aws.String("AWSEvents"),
+				UsageType:   aws.String(prefix + "-Event-64K-Chunks"),
+				Operation:   aws.String("PutEvents"),
+			},
+			price: 0.000001, // per 64KB event chunk
+		},
+		{
+			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+				ServiceCode: aws.String("AmazonStates"),
+				UsageType:   aws.String(prefix + "-StateTransition"),
+				Operation:   aws.String("StartExecution"),
+			},
+			price: 0.000025, // per state transition
+		},
+		{
+			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+				ServiceCode: aws.String("AmazonElastiCache"),
+				UsageType:   aws.String(prefix + "-NodeUsage:cache.t4g.small"),
+				Operation:   aws.String("CreateCacheCluster"),
+			},
+			price: 0.034, // per node hour
+		},
+		{
+			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+				ServiceCode: aws.String("AmazonS3"),
+				UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
+				Operation:   aws.String("PutObject"),
+			},
+			// Convert $0.023 per GB-month to the Byte-hour unit the API uses.
+			price: 0.023 / (1024 * 1024 * 1024) / 730,
+		},
 	}
 }
 
@@ -183,33 +225,41 @@ func assignUsage(lines []usageLine, amount float64) {
 	if amount <= 0 {
 		return
 	}
-	remaining := amount
+	// Group lines by service so each service receives an equal share
+	// of the overall cost. If a service has multiple usage lines, split
+	// that service's share evenly across them.
+	services := map[string][]int{}
 	for i := range lines {
-		if remaining >= lines[i].price {
-			lines[i].Amount = aws.Float64(1)
-			remaining -= lines[i].price
-		}
-	}
-	sort.Slice(lines, func(i, j int) bool { return lines[i].price > lines[j].price })
-	for i := range lines {
-		if remaining < lines[i].price {
+		if lines[i].price <= 0 {
 			continue
 		}
-		units := math.Floor(remaining / lines[i].price)
-		if units > 0 {
-			if lines[i].Amount == nil {
+		svc := ""
+		if lines[i].ServiceCode != nil {
+			svc = *lines[i].ServiceCode
+		}
+		services[svc] = append(services[svc], i)
+	}
+	if len(services) == 0 {
+		return
+	}
+	perService := amount / float64(len(services))
+	total := 0.0
+	for _, idxs := range services {
+		perLine := perService / float64(len(idxs))
+		for _, i := range idxs {
+			units := perLine / lines[i].price
+			if units > 0 {
 				lines[i].Amount = aws.Float64(units)
-			} else {
-				*lines[i].Amount += units
+				total += units * lines[i].price
 			}
-			remaining -= units * lines[i].price
 		}
 	}
-	if remaining > 0 {
-		if lines[0].Amount == nil {
-			lines[0].Amount = aws.Float64(remaining / lines[0].price)
-		} else {
-			*lines[0].Amount += remaining / lines[0].price
+	if diff := amount - total; math.Abs(diff) > 1e-6 {
+		for i := range lines {
+			if lines[i].price > 0 && lines[i].Amount != nil {
+				*lines[i].Amount += diff / lines[i].price
+				break
+			}
 		}
 	}
 }
