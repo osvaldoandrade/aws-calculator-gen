@@ -110,12 +110,12 @@ func defaultEntries(prefix, profile string) []usageLine {
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 					ServiceCode: aws.String("AmazonS3"),
-					UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
+					UsageType:   aws.String(prefix + "-Requests-Tier1"),
 					Operation:   aws.String("PutObject"),
 				},
-				// Standard storage is $0.023 per GB-month. Convert to the
-				// price per Byte-hour expected by the Pricing Calculator.
-				price: 0.023 / (1024 * 1024 * 1024) / 730,
+				// Tier 1 S3 requests are $0.005 per 1,000 requests.
+				price: 0.000005, // per request
+
 			},
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
@@ -212,11 +212,12 @@ func defaultEntries(prefix, profile string) []usageLine {
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 				ServiceCode: aws.String("AmazonS3"),
-				UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
+				UsageType:   aws.String(prefix + "-Requests-Tier1"),
 				Operation:   aws.String("PutObject"),
 			},
-			// Convert $0.023 per GB-month to the Byte-hour unit the API uses.
-			price: 0.023 / (1024 * 1024 * 1024) / 730,
+			// Tier 1 S3 requests cost $0.005 per 1,000 requests.
+			price: 0.000005, // per request
+
 		},
 	}
 }
@@ -252,12 +253,8 @@ func assignUsage(lines []usageLine, amount float64) {
 				lines[i].Amount = aws.Float64(units)
 				total += units * lines[i].price
 			}
-
 		}
 		services[svc] = append(services[svc], i)
-	}
-	if len(services) == 0 {
-		return
 	}
 	if diff := amount - total; math.Abs(diff) > 1e-6 {
 		for i := range lines {

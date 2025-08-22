@@ -81,6 +81,7 @@ func TestAssignUsageLakeProfile(t *testing.T) {
 	if len(athena) != 2 || math.Abs(athena[0]-athena[1]) > 1 {
 		t.Fatalf("Athena cost split mismatch: %#v", athena)
 	}
+
 	if math.Abs(total-300000) > 1 {
 		t.Fatalf("total cost %f, expected 300000", total)
 	}
