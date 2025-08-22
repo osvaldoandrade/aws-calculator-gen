@@ -50,3 +50,38 @@ func TestAssignUsageSplitsWithinService(t *testing.T) {
 		t.Fatalf("line 2 cost %f, expected 3", *lines[2].Amount*lines[2].price)
 	}
 }
+
+func TestAssignUsageLakeProfile(t *testing.T) {
+	lines := defaultEntries("USE1", "lake")
+	assignUsage(lines, 300000)
+	services := map[string]float64{}
+	var athena []float64
+	total := 0.0
+	for _, l := range lines {
+		if l.Amount == nil || l.price <= 0 {
+			continue
+		}
+		cost := *l.Amount * l.price
+		svc := aws.ToString(l.ServiceCode)
+		services[svc] += cost
+		total += cost
+		if svc == "AmazonAthena" {
+			athena = append(athena, cost)
+		}
+	}
+	if len(services) != 6 {
+		t.Fatalf("expected 6 services, got %d", len(services))
+	}
+	perService := 300000.0 / 6
+	for svc, cost := range services {
+		if math.Abs(cost-perService) > 1 {
+			t.Fatalf("service %s cost %f, expected %f", svc, cost, perService)
+		}
+	}
+	if len(athena) != 2 || math.Abs(athena[0]-athena[1]) > 1 {
+		t.Fatalf("Athena cost split mismatch: %#v", athena)
+	}
+	if math.Abs(total-300000) > 1 {
+		t.Fatalf("total cost %f, expected 300000", total)
+	}
+}

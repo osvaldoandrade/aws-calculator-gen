@@ -2,6 +2,7 @@ package awspc
 
 import (
 	"context"
+	"math"
 	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -242,12 +243,27 @@ func assignUsage(lines []usageLine, amount float64) {
 		return
 	}
 	perService := amount / float64(len(services))
+	total := 0.0
 	for _, idxs := range services {
 		perLine := perService / float64(len(idxs))
 		for _, i := range idxs {
 			units := perLine / lines[i].price
 			if units > 0 {
 				lines[i].Amount = aws.Float64(units)
+				total += units * lines[i].price
+			}
+
+		}
+		services[svc] = append(services[svc], i)
+	}
+	if len(services) == 0 {
+		return
+	}
+	if diff := amount - total; math.Abs(diff) > 1e-6 {
+		for i := range lines {
+			if lines[i].price > 0 && lines[i].Amount != nil {
+				*lines[i].Amount += diff / lines[i].price
+				break
 			}
 		}
 	}
