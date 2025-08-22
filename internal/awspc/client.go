@@ -110,6 +110,14 @@ func defaultEntries(prefix, profile string) []usageLine {
 		return []usageLine{
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+					ServiceCode: aws.String("AmazonDynamoDB"),
+					UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
+					Operation:   aws.String("CreateTable"),
+				},
+				price: 0.25, // per GB-month
+			},
+			{
+				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 					ServiceCode: aws.String("AmazonRedshift"),
 					UsageType:   aws.String(prefix + "-Redshift:ServerlessUsage"),
 					Operation:   aws.String("CreateWorkgroup"),
@@ -143,6 +151,14 @@ func defaultEntries(prefix, profile string) []usageLine {
 				Operation:   aws.String("RunInstances"),
 			},
 			price: 0.096, // per hour
+		},
+		{
+			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+				ServiceCode: aws.String("AmazonS3"),
+				UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
+				Operation:   aws.String("PutObject"),
+			},
+			price: 0.023, // per GB-month
 		},
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
