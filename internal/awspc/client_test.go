@@ -1,10 +1,10 @@
 package awspc
 
 import (
-	"math"
-	"testing"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	bcmtypes "github.com/aws/aws-sdk-go-v2/service/bcmpricingcalculator/types"
+	"math"
+	"testing"
 )
 
 func TestAssignUsage(t *testing.T) {
@@ -52,7 +52,7 @@ func TestAssignUsageSplitsWithinService(t *testing.T) {
 }
 
 func TestAssignUsageLakeProfile(t *testing.T) {
-	lines := defaultEntries("USE1", "lake")
+	lines := defaultEntries("lake")
 	assignUsage(lines, 300000)
 	services := map[string]float64{}
 	var athena []float64
