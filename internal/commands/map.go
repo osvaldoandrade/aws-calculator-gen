@@ -86,7 +86,7 @@ func (MapCommand) Command() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			link := fmt.Sprintf("https://console.aws.amazon.com/costmanagement/home#/pricing-calculator/workload-estimates/%s", id)
+			link := fmt.Sprintf("https://calculator.aws/#/estimate?id=%s", id)
 			pterm.Success.Printf("AWS estimate created: %s\n", link)
 
 			spin, _ := pterm.DefaultSpinner.Start("Generating MAP artifacts")
