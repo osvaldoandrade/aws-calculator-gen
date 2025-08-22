@@ -115,6 +115,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 				},
 				// Tier 1 S3 requests are $0.005 per 1,000 requests.
 				price: 0.000005, // per request
+
 			},
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
@@ -216,6 +217,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 			},
 			// Tier 1 S3 requests cost $0.005 per 1,000 requests.
 			price: 0.000005, // per request
+
 		},
 	}
 }
@@ -252,6 +254,7 @@ func assignUsage(lines []usageLine, amount float64) {
 				total += units * lines[i].price
 			}
 		}
+		services[svc] = append(services[svc], i)
 	}
 	if diff := amount - total; math.Abs(diff) > 1e-6 {
 		for i := range lines {
