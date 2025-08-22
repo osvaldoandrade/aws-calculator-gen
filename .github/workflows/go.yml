@@ -13,11 +13,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  APP_NAME: seidor-aws-cli
-  APP_DISPLAY: "Seidor AWS CLI"
-  BUNDLE_ID: com.seidor.awscli
-  VOL_NAME: "Seidor AWS CLI"
-  MAIN_PKG: ./cmd/seidor-aws-cli
+  APP_NAME: seidor-cloud
+  APP_DISPLAY: "Seidor Cloud"
+  BUNDLE_ID: com.seidor.cloud
+  VOL_NAME: "Seidor Cloud"
+  MAIN_PKG: ./cmd/seidor-cloud
 
 jobs:
   build-test:
@@ -120,7 +120,7 @@ jobs:
             <key>CFBundleVersion</key><string>${VERSION}</string>
             <key>LSMinimumSystemVersion</key><string>11.0</string>
             <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
-            <key>CFBundleIconFile</key><string>SeidorAWSCLI.icns</string>
+            <key>CFBundleIconFile</key><string>SeidorCloud.icns</string>
           </dict>
           </plist>
           PLIST
@@ -129,23 +129,23 @@ jobs:
           cat > "$APP/Contents/MacOS/launcher" <<'SH'
           #!/bin/bash
           set -euo pipefail
-          BIN_SRC="$(dirname "$0")/../Resources/seidor-aws-cli"
+          BIN_SRC="$(dirname "$0")/../Resources/seidor-cloud"
           TARGET="/usr/local/bin"
           /usr/bin/osascript <<OSA
-          do shell script "mkdir -p '${TARGET}' && install -m 0755 '${BIN_SRC}' '${TARGET}/seidor-aws-cli' && xattr -d com.apple.quarantine '${TARGET}/seidor-aws-cli' || true" with administrator privileges
+          do shell script "mkdir -p '${TARGET}' && install -m 0755 '${BIN_SRC}' '${TARGET}/seidor-cloud' && xattr -d com.apple.quarantine '${TARGET}/seidor-cloud' || true" with administrator privileges
           OSA
-          /usr/bin/osascript -e 'display dialog "Seidor AWS CLI instalado em /usr/local/bin." buttons {"OK"} default button 1 with icon note'
+          /usr/bin/osascript -e 'display dialog "Seidor Cloud instalado em /usr/local/bin." buttons {"OK"} default button 1 with icon note'
           SH
           chmod +x "$APP/Contents/MacOS/launcher"
 
           # Binário universal embutido
-          cp dist/${APP_NAME} "$APP/Contents/Resources/seidor-aws-cli"
+          cp dist/${APP_NAME} "$APP/Contents/Resources/seidor-cloud"
 
           # Ícone (opcional)
           if [ -f assets/icon.png ]; then
             mkdir -p icon.iconset
             for s in 16 32 64 128 256 512 1024; do /usr/bin/sips -z $s $s assets/icon.png --out icon.iconset/icon_${s}x${s}.png >/dev/null; done
-            /usr/bin/iconutil -c icns icon.iconset -o "$APP/Contents/Resources/SeidorAWSCLI.icns"
+            /usr/bin/iconutil -c icns icon.iconset -o "$APP/Contents/Resources/SeidorCloud.icns"
           fi
 
       - name: Ad-hoc codesign .app

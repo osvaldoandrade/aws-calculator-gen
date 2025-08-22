@@ -47,9 +47,9 @@ func (MapCommand) Command() *cobra.Command {
 			if err := survey.AskOne(&survey.Select{Message: "Region:", Options: regions}, &region); err != nil {
 				return err
 			}
-			var profile string
-			profiles := []string{"transactional", "lake"}
-			if err := survey.AskOne(&survey.Select{Message: "Workload profile:", Options: profiles}, &profile); err != nil {
+			var template string
+			templates := []string{"generic-reactive", "generic-lake"}
+			if err := survey.AskOne(&survey.Select{Message: "Solution template:", Options: templates}, &template); err != nil {
 				return err
 			}
 			var arrStr string
@@ -69,7 +69,7 @@ func (MapCommand) Command() *cobra.Command {
 			llmClient := llm.NewOpenAIClientFromEnv()
 			summary, err := llmClient.Generate(cmd.Context(), llm.Prompt{
 				System: "You generate brief MAP summaries in Portuguese.",
-				User:   fmt.Sprintf("Cliente %s, perfil %s, ARR %.2f", customer, profile, arr),
+				User:   fmt.Sprintf("Cliente %s, template %s, ARR %.2f", customer, template, arr),
 			})
 			if err != nil {
 				pterm.Warning.Printf("LLM resumo falhou: %v\n", err)
@@ -81,7 +81,7 @@ func (MapCommand) Command() *cobra.Command {
 				pterm.Warning.Printf("using stub AWS client: %v\n", err)
 				client = awspc.StubClient{}
 			}
-			id, err := client.CreateWorkloadEstimate(cmd.Context(), title, region, profile, arr)
+			id, err := client.CreateWorkloadEstimate(cmd.Context(), title, region, template, arr)
 
 			if err != nil {
 				return err

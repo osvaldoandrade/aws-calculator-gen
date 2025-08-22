@@ -51,8 +51,8 @@ func TestAssignUsageSplitsWithinService(t *testing.T) {
 	}
 }
 
-func TestAssignUsageLakeProfile(t *testing.T) {
-	lines := defaultEntries("us-east-1", "lake")
+func TestAssignUsageGenericLakeTemplate(t *testing.T) {
+	lines := defaultEntries("us-east-1", "generic-lake")
 	assignUsage(lines, 300000)
 	services := map[string]float64{}
 	total := 0.0
@@ -79,8 +79,8 @@ func TestAssignUsageLakeProfile(t *testing.T) {
 	}
 }
 
-func TestAssignUsageTransactionalProfile(t *testing.T) {
-	lines := defaultEntries("us-east-1", "transactional")
+func TestAssignUsageGenericReactiveTemplate(t *testing.T) {
+	lines := defaultEntries("us-east-1", "generic-reactive")
 	assignUsage(lines, 120000)
 	services := map[string]float64{}
 	total := 0.0
