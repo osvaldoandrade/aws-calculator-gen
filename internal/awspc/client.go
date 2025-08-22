@@ -49,8 +49,7 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, p
 	}
 	id := aws.ToString(out.Id)
 
-	_ = region
-	lines := defaultEntries(profile)
+	lines := defaultEntries(region, profile)
 	if len(lines) == 0 {
 		return id, nil
 	}
@@ -139,7 +138,23 @@ type usageLine struct {
 	price float64
 }
 
-func defaultEntries(profile string) []usageLine {
+func usagePrefix(region string) string {
+	switch region {
+	case "us-east-1":
+		return "USE1-"
+	case "us-west-2":
+		return "USW2-"
+	case "eu-west-1":
+		return "EUW1-"
+	case "sa-east-1":
+		return "SAE1-"
+	default:
+		return ""
+	}
+}
+
+func defaultEntries(region, profile string) []usageLine {
+	prefix := usagePrefix(region)
 	if profile == "lake" {
 		return []usageLine{
 			{
@@ -155,34 +170,26 @@ func defaultEntries(profile string) []usageLine {
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 					ServiceCode: aws.String("AmazonRedshift"),
-					UsageType:   aws.String("Redshift:ServerlessUsage"),
-					Operation:   aws.String("CreateWorkgroup"),
+					UsageType:   aws.String(prefix + "Redshift:ServerlessUsage"),
+					Operation:   aws.String("RunServerlessCompute:001"),
 				},
 				price: 0.5, // per RPU-hour
 			},
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 					ServiceCode: aws.String("AWSGlue"),
-					UsageType:   aws.String("ETL-Flex-DPU-Hour"),
-					Operation:   aws.String("StartJobRun"),
+					UsageType:   aws.String(prefix + "ETL-Flex-DPU-Hour"),
+					Operation:   aws.String("FlexJobRun"),
 				},
 				price: 0.44, // per DPU-hour
 			},
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 					ServiceCode: aws.String("AmazonAthena"),
-					UsageType:   aws.String("DataScannedInTB"),
-					Operation:   aws.String("RunQuery"),
+					UsageType:   aws.String(prefix + "DataScannedInTB"),
+					Operation:   aws.String(""),
 				},
 				price: 5.0, // per TB scanned
-			},
-			{
-				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
-					ServiceCode: aws.String("AmazonAthena"),
-					UsageType:   aws.String("DMLQueries"),
-					Operation:   aws.String("RunQuery"),
-				},
-				price: 0.0005, // per DML query
 			},
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
