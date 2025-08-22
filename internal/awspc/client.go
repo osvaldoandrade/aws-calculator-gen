@@ -145,6 +145,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 					Operation:   aws.String("RunQuery"),
 				},
 				price: 0.0005, // per DML query
+
 			},
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
@@ -168,6 +169,7 @@ func defaultEntries(prefix, profile string) []usageLine {
 	return []usageLine{
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+
 				ServiceCode: aws.String("AmazonRDS"),
 				UsageType:   aws.String(prefix + "-InstanceUsage:db.m7g.large"),
 				Operation:   aws.String("CreateDBInstance"),
@@ -229,6 +231,7 @@ func assignUsage(lines []usageLine, amount float64) {
 	}
 	if len(priced) == 0 {
 		return
+
 	}
 	perLine := amount / float64(len(priced))
 	for _, i := range priced {
