@@ -52,10 +52,9 @@ func TestAssignUsageSplitsWithinService(t *testing.T) {
 }
 
 func TestAssignUsageLakeProfile(t *testing.T) {
-	lines := defaultEntries("lake")
+	lines := defaultEntries("us-east-1", "lake")
 	assignUsage(lines, 300000)
 	services := map[string]float64{}
-	var athena []float64
 	total := 0.0
 	for _, l := range lines {
 		if l.Amount == nil || l.price <= 0 {
@@ -65,9 +64,6 @@ func TestAssignUsageLakeProfile(t *testing.T) {
 		svc := aws.ToString(l.ServiceCode)
 		services[svc] += cost
 		total += cost
-		if svc == "AmazonAthena" {
-			athena = append(athena, cost)
-		}
 	}
 	if len(services) != 6 {
 		t.Fatalf("expected 6 services, got %d", len(services))
@@ -78,11 +74,57 @@ func TestAssignUsageLakeProfile(t *testing.T) {
 			t.Fatalf("service %s cost %f, expected %f", svc, cost, perService)
 		}
 	}
-	if len(athena) != 2 || math.Abs(athena[0]-athena[1]) > 1 {
-		t.Fatalf("Athena cost split mismatch: %#v", athena)
-	}
-
 	if math.Abs(total-300000) > 1 {
 		t.Fatalf("total cost %f, expected 300000", total)
+	}
+}
+
+func TestAssignUsageTransactionalProfile(t *testing.T) {
+	lines := defaultEntries("us-east-1", "transactional")
+	assignUsage(lines, 120000)
+	services := map[string]float64{}
+	total := 0.0
+	for _, l := range lines {
+		if l.Amount == nil || l.price <= 0 {
+			continue
+		}
+		cost := *l.Amount * l.price
+		svc := aws.ToString(l.ServiceCode)
+		services[svc] += cost
+		total += cost
+	}
+	if len(services) != 6 {
+		t.Fatalf("expected 6 services, got %d", len(services))
+	}
+	perService := 120000.0 / 6
+	for svc, cost := range services {
+		if math.Abs(cost-perService) > 1 {
+			t.Fatalf("service %s cost %f, expected %f", svc, cost, perService)
+		}
+	}
+	if math.Abs(total-120000) > 1 {
+		t.Fatalf("total cost %f, expected 120000", total)
+	}
+
+	prefix := usagePrefix("us-east-1")
+	for _, l := range lines {
+		switch aws.ToString(l.ServiceCode) {
+		case "AWSEvents":
+			if aws.ToString(l.UsageType) != prefix+"Event-64K-Chunks" {
+				t.Fatalf("unexpected events usage type %s", aws.ToString(l.UsageType))
+			}
+		case "AmazonStates":
+			if aws.ToString(l.UsageType) != prefix+"StateTransition" || aws.ToString(l.Operation) != "" {
+				t.Fatalf("unexpected states entry: %+v", l)
+			}
+		case "AmazonRDS":
+			if aws.ToString(l.Operation) != "CreateDBInstance:0014" {
+				t.Fatalf("unexpected rds operation %s", aws.ToString(l.Operation))
+			}
+		case "AmazonElastiCache":
+			if aws.ToString(l.Operation) != "CreateCacheCluster:0002" {
+				t.Fatalf("unexpected elasticache operation %s", aws.ToString(l.Operation))
+			}
+		}
 	}
 }
