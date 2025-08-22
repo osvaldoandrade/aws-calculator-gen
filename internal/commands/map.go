@@ -120,7 +120,12 @@ func (MapCommand) Command() *cobra.Command {
 func slugify(s string) string {
 	s = strings.ToLower(s)
 	s = strings.TrimSpace(s)
-	s = strings.ReplaceAll(s, " ", "_")
-	re := regexp.MustCompile(`[^a-z0-9_]+`)
-	return re.ReplaceAllString(s, "")
+	r := strings.NewReplacer(" ", "-", "_", "-")
+	s = r.Replace(s)
+	re := regexp.MustCompile(`[^a-z0-9-]+`)
+	s = re.ReplaceAllString(s, "")
+	re = regexp.MustCompile(`-+`)
+	s = re.ReplaceAllString(s, "-")
+	return strings.Trim(s, "-")
+
 }

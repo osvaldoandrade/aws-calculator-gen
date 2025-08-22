@@ -22,7 +22,7 @@ Com essas informações a ferramenta:
 - Gera os arquivos `MAP.md`, `MAP.xlsx` e `MAP.txt` no diretório fornecido
 - Inclui no `MAP.txt` o link direto para o estimate gerado
 
-O estimate no AWS Pricing Calculator receberá automaticamente o nome `yyyymmdd-nome_cliente-descricao_deal_resumida`.
+O estimate no AWS Pricing Calculator receberá automaticamente o nome `yyyymmdd-nome-cliente-descricao-deal-resumida`.
 
 Use os artefatos produzidos para submeter e acompanhar o incentivo MAP junto ao time da AWS.
 
