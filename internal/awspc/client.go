@@ -110,18 +110,11 @@ func defaultEntries(prefix, profile string) []usageLine {
 		return []usageLine{
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
-					ServiceCode: aws.String("AmazonDynamoDB"),
-					UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
-					Operation:   aws.String("CreateTable"),
-				},
-				price: 0.25, // per GB-month
-			},
-			{
-				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 					ServiceCode: aws.String("AmazonS3"),
 					UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
 					Operation:   aws.String("PutObject"),
 				},
+
 				price: 0.023, // per GB-month
 			},
 			{
@@ -157,28 +150,31 @@ func defaultEntries(prefix, profile string) []usageLine {
 				},
 				price: 0, // per query (no cost)
 			},
+			{
+				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+					ServiceCode: aws.String("AWSLambda"),
+					UsageType:   aws.String(prefix + "-Lambda-GB-Second"),
+					Operation:   aws.String("Invoke"),
+				},
+				price: 0.0000166667, // per GB-second
+			},
+			{
+				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+					ServiceCode: aws.String("AmazonEC2"),
+					UsageType:   aws.String(prefix + "-BoxUsage:m7g.large"),
+					Operation:   aws.String("RunInstances"),
+				},
+				price: 0.096, // per hour
+			},
+
 		}
 	}
-	// default transactional profile
+	// transactional profile
 	return []usageLine{
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
-				ServiceCode: aws.String("AmazonEC2"),
-				UsageType:   aws.String(prefix + "-BoxUsage:m7g.large"),
-				Operation:   aws.String("RunInstances"),
-			},
-			price: 0.096, // per hour
-		},
-		{
-			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
-				ServiceCode: aws.String("AmazonS3"),
-				UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
-				Operation:   aws.String("PutObject"),
-			},
-			price: 0.023, // per GB-month
-		},
-		{
-			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+
+
 				ServiceCode: aws.String("AmazonRDS"),
 				UsageType:   aws.String(prefix + "-InstanceUsage:db.m7g.large"),
 				Operation:   aws.String("CreateDBInstance"),
@@ -192,6 +188,38 @@ func defaultEntries(prefix, profile string) []usageLine {
 				Operation:   aws.String("Invoke"),
 			},
 			price: 0.0000166667, // per GB-second
+		},
+		{
+			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+				ServiceCode: aws.String("AWSEvents"),
+				UsageType:   aws.String(prefix + "-Event-64K-Chunks"),
+				Operation:   aws.String("PutEvents"),
+			},
+			price: 0.000001, // per 64KB event chunk
+		},
+		{
+			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+				ServiceCode: aws.String("AmazonStates"),
+				UsageType:   aws.String(prefix + "-StateTransition"),
+				Operation:   aws.String("StartExecution"),
+			},
+			price: 0.000025, // per state transition
+		},
+		{
+			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+				ServiceCode: aws.String("AmazonElastiCache"),
+				UsageType:   aws.String(prefix + "-NodeUsage:cache.t4g.small"),
+				Operation:   aws.String("CreateCacheCluster"),
+			},
+			price: 0.034, // per node hour
+		},
+		{
+			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
+				ServiceCode: aws.String("AmazonS3"),
+				UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
+				Operation:   aws.String("PutObject"),
+			},
+			price: 0.023, // per GB-month
 		},
 	}
 }
