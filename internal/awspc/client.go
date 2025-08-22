@@ -2,6 +2,7 @@ package awspc
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 
@@ -53,24 +54,58 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, p
 		return id, nil
 	}
 
-	assignUsage(lines, amount)
-	var usage []bcmtypes.BatchCreateWorkloadEstimateUsageEntry
-	for i := range lines {
-		if lines[i].Amount == nil || *lines[i].Amount == 0 {
-			continue
+	var prevKeys []string
+	for attempt := 0; attempt < 5; attempt++ {
+		assignUsage(lines, amount)
+		var usage []bcmtypes.BatchCreateWorkloadEstimateUsageEntry
+		var keys []string
+		for i := range lines {
+			if lines[i].Amount == nil || *lines[i].Amount == 0 {
+				continue
+			}
+			cost := *lines[i].Amount * lines[i].price
+			svc := ""
+			if lines[i].ServiceCode != nil {
+				svc = *lines[i].ServiceCode
+			}
+			fmt.Printf("adding service %s cost %.2f\n", svc, cost)
+			lines[i].Key = aws.String(strconv.Itoa(len(usage) + 1))
+			lines[i].UsageAccountId = aws.String(c.accountID)
+			keys = append(keys, aws.ToString(lines[i].Key))
+			usage = append(usage, lines[i].BatchCreateWorkloadEstimateUsageEntry)
 		}
-		lines[i].Key = aws.String(strconv.Itoa(len(usage) + 1))
-		lines[i].UsageAccountId = aws.String(c.accountID)
-		usage = append(usage, lines[i].BatchCreateWorkloadEstimateUsageEntry)
-	}
-	if len(usage) > 0 {
-		_, err = c.svc.BatchCreateWorkloadEstimateUsage(ctx, &bcm.BatchCreateWorkloadEstimateUsageInput{
-			WorkloadEstimateId: aws.String(id),
-			Usage:              usage,
-		})
-		if err != nil {
+
+		if attempt > 0 && len(prevKeys) > 0 {
+			_, err = c.svc.BatchDeleteWorkloadEstimateUsage(ctx, &bcm.BatchDeleteWorkloadEstimateUsageInput{
+				WorkloadEstimateId: aws.String(id),
+				Ids:                prevKeys,
+			})
+			if err != nil {
+				return "", err
+			}
+		}
+
+		if len(usage) > 0 {
+			_, err = c.svc.BatchCreateWorkloadEstimateUsage(ctx, &bcm.BatchCreateWorkloadEstimateUsageInput{
+				WorkloadEstimateId: aws.String(id),
+				Usage:              usage,
+			})
+			if err != nil {
+				return "", err
+			}
+		}
+
+		est, err := c.svc.GetWorkloadEstimate(ctx, &bcm.GetWorkloadEstimateInput{Identifier: aws.String(id)})
+		if err != nil || est.TotalCost == nil {
 			return "", err
 		}
+		fmt.Printf("calculator total %.2f\n", *est.TotalCost)
+		diff := amount - *est.TotalCost
+		if math.Abs(diff) < 0.01 {
+			break
+		}
+		amount += diff
+		prevKeys = keys
 	}
 	return id, nil
 }
