@@ -1,4 +1,4 @@
-# seidor-cloud
+## SEIDOR CLOUD
 
 Command‑line utility to generate AWS Pricing Calculator estimates and MAP incentive artifacts.
 

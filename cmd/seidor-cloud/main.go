@@ -11,7 +11,7 @@ import (
 func main() {
 	// Clear the screen and render a title before starting the CLI.
 	pterm.Print("\033[H\033[2J")
-	pterm.DefaultBigText.WithLetters(pterm.NewLettersFromString("Seidor Cloud")).Render()
+	pterm.DefaultCenter.Println(pterm.NewStyle(pterm.FgLightCyan, pterm.Bold).Sprint("Seidor Cloud"))
 
 	root := cli.NewRoot()
 	if err := root.ExecuteContext(context.Background()); err != nil {

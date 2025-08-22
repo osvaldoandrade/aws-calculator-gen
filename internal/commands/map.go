@@ -81,12 +81,11 @@ func (MapCommand) Command() *cobra.Command {
 				pterm.Warning.Printf("using stub AWS client: %v\n", err)
 				client = awspc.StubClient{}
 			}
-			id, err := client.CreateWorkloadEstimate(cmd.Context(), title, region, template, arr)
+			link, err := client.CreateWorkloadEstimate(cmd.Context(), title, region, template, arr)
 
 			if err != nil {
 				return err
 			}
-			link := fmt.Sprintf("https://console.aws.amazon.com/costmanagement/home#/pricing-calculator/workload-estimates/%s", id)
 			pterm.Success.Printf("AWS estimate created: %s\n", link)
 
 			spin, _ := pterm.DefaultSpinner.Start("Generating MAP artifacts")

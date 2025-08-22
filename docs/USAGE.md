@@ -1,4 +1,4 @@
-# seidor-cloud Uso
+## SEIDOR CLOUD Uso
 
 Este guia demonstra como gerar artefatos de incentivo MAP e um estimate no AWS Pricing Calculator usando o `seidor-cloud`.
 

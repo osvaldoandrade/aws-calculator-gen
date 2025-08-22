@@ -2,12 +2,17 @@ package awspc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
 	bcm "github.com/aws/aws-sdk-go-v2/service/bcmpricingcalculator"
 	bcmtypes "github.com/aws/aws-sdk-go-v2/service/bcmpricingcalculator/types"
@@ -31,13 +36,14 @@ func New(ctx context.Context) (Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &AWSClient{svc: bcm.NewFromConfig(cfg), accountID: aws.ToString(ident.Account)}, nil
+	return &AWSClient{svc: bcm.NewFromConfig(cfg), accountID: aws.ToString(ident.Account), cfg: cfg}, nil
 }
 
 // AWSClient calls the real AWS Pricing Calculator API.
 type AWSClient struct {
 	svc       *bcm.Client
 	accountID string
+	cfg       aws.Config
 }
 
 // CreateWorkloadEstimate creates a workload estimate and several usage lines.
@@ -49,10 +55,16 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, t
 		return "", err
 	}
 	id := aws.ToString(out.Id)
+	baseLink := fmt.Sprintf("https://calculator.aws/#/estimate?id=%s", id)
 
 	lines := defaultEntries(region, template)
 	if len(lines) == 0 {
-		return id, nil
+		link, err2 := c.shareEstimate(ctx, id)
+		if err2 != nil {
+			pterm.Warning.Printf("share estimate failed: %v\n", err2)
+			return baseLink, nil
+		}
+		return link, nil
 	}
 
 	var prevIDs []string
@@ -127,7 +139,47 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, t
 		amount += diff
 	}
 	pterm.Println()
-	return id, nil
+	link, err2 := c.shareEstimate(ctx, id)
+	if err2 != nil {
+		pterm.Warning.Printf("share estimate failed: %v\n", err2)
+		return baseLink, nil
+	}
+	return link, nil
+}
+
+func (c *AWSClient) shareEstimate(ctx context.Context, id string) (string, error) {
+	url := fmt.Sprintf("https://calculator.aws/pricing-calculator/api/estimates/%s/share", id)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return "", err
+	}
+	creds, err := c.cfg.Credentials.Retrieve(ctx)
+	if err != nil {
+		return "", err
+	}
+	signer := v4.NewSigner()
+	if err := signer.SignHTTP(ctx, creds, req, "", "bcm-pricing-calculator", "us-east-1", time.Now()); err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("share request failed: %s: %s", resp.Status, string(b))
+	}
+	var out struct {
+		ShareURL string `json:"shareUrl"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if out.ShareURL == "" {
+		return "", fmt.Errorf("share url missing")
+	}
+	return out.ShareURL, nil
 }
 
 // StubClient implements Client without calling AWS.
@@ -136,7 +188,7 @@ type StubClient struct{}
 func (StubClient) CreateWorkloadEstimate(ctx context.Context, title, region, template string, amount float64) (string, error) {
 	_ = region
 	_ = template
-	return "stub-id", nil
+	return "https://calculator.aws/#/estimate?id=stub-id", nil
 }
 
 type usageLine struct {
