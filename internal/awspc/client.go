@@ -112,7 +112,9 @@ func defaultEntries(prefix, profile string) []usageLine {
 					UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
 					Operation:   aws.String("PutObject"),
 				},
-				price: 0.023, // per GB-month
+				// Standard storage is $0.023 per GB-month. Convert to the
+				// price per Byte-hour expected by the Pricing Calculator.
+				price: 0.023 / (1024 * 1024 * 1024) / 730,
 			},
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
@@ -145,7 +147,6 @@ func defaultEntries(prefix, profile string) []usageLine {
 					Operation:   aws.String("RunQuery"),
 				},
 				price: 0.0005, // per DML query
-
 			},
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
@@ -169,7 +170,6 @@ func defaultEntries(prefix, profile string) []usageLine {
 	return []usageLine{
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
-
 				ServiceCode: aws.String("AmazonRDS"),
 				UsageType:   aws.String(prefix + "-InstanceUsage:db.m7g.large"),
 				Operation:   aws.String("CreateDBInstance"),
@@ -214,7 +214,8 @@ func defaultEntries(prefix, profile string) []usageLine {
 				UsageType:   aws.String(prefix + "-TimedStorage-ByteHrs"),
 				Operation:   aws.String("PutObject"),
 			},
-			price: 0.023, // per GB-month
+			// Convert $0.023 per GB-month to the Byte-hour unit the API uses.
+			price: 0.023 / (1024 * 1024 * 1024) / 730,
 		},
 	}
 }
@@ -223,21 +224,31 @@ func assignUsage(lines []usageLine, amount float64) {
 	if amount <= 0 {
 		return
 	}
-	var priced []int
+	// Group lines by service so each service receives an equal share
+	// of the overall cost. If a service has multiple usage lines, split
+	// that service's share evenly across them.
+	services := map[string][]int{}
 	for i := range lines {
-		if lines[i].price > 0 {
-			priced = append(priced, i)
+		if lines[i].price <= 0 {
+			continue
 		}
+		svc := ""
+		if lines[i].ServiceCode != nil {
+			svc = *lines[i].ServiceCode
+		}
+		services[svc] = append(services[svc], i)
 	}
-	if len(priced) == 0 {
+	if len(services) == 0 {
 		return
-
 	}
-	perLine := amount / float64(len(priced))
-	for _, i := range priced {
-		units := perLine / lines[i].price
-		if units > 0 {
-			lines[i].Amount = aws.Float64(units)
+	perService := amount / float64(len(services))
+	for _, idxs := range services {
+		perLine := perService / float64(len(idxs))
+		for _, i := range idxs {
+			units := perLine / lines[i].price
+			if units > 0 {
+				lines[i].Amount = aws.Float64(units)
+			}
 		}
 	}
 }
