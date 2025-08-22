@@ -1,8 +1,8 @@
-project_name: seidor-aws-cli
+project_name: seidor-cloud
 builds:
-  - id: seidor-aws-cli
-    main: ./cmd/seidor-aws-cli
-    binary: seidor-aws-cli
+  - id: seidor-cloud
+    main: ./cmd/seidor-cloud
+    binary: seidor-cloud
     goos: [linux, darwin]
     goarch: [amd64, arm64]
 release:
