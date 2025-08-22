@@ -11,7 +11,10 @@ import (
 	"github.com/spf13/cobra"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
+	"time"
 )
 
 // MapCommand exposes MAP incentive helpers.
@@ -55,13 +58,10 @@ func (MapCommand) Command() *cobra.Command {
 			}
 			arr, err := strconv.ParseFloat(arrStr, 64)
 			if err != nil {
-
 				return err
 			}
-			var title string
-			if err := survey.AskOne(&survey.Input{Message: "Estimate title:"}, &title, survey.WithValidator(survey.Required)); err != nil {
-				return err
-			}
+			title := fmt.Sprintf("%s-%s-%s", time.Now().Format("20060102"), slugify(customer), slugify(description))
+			pterm.Info.Printf("Estimate title: %s\n", title)
 
 			plan := incentives.ComputeMAPFunding(arr)
 			pterm.Info.Printf("Tier %s with cap %.2f\n", plan.Tier, plan.CapAmount)
@@ -115,4 +115,16 @@ func (MapCommand) Command() *cobra.Command {
 	wizardCmd.Flags().StringVar(&outDir, "out", "./out", "output directory")
 	cmd.AddCommand(wizardCmd)
 	return cmd
+}
+
+func slugify(s string) string {
+	s = strings.ToLower(s)
+	s = strings.TrimSpace(s)
+	r := strings.NewReplacer(" ", "-", "_", "-")
+	s = r.Replace(s)
+	re := regexp.MustCompile(`[^a-z0-9-]+`)
+	s = re.ReplaceAllString(s, "")
+	re = regexp.MustCompile(`-+`)
+	s = re.ReplaceAllString(s, "-")
+	return strings.Trim(s, "-")
 }
