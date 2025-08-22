@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -57,6 +58,7 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, p
 	var prevIDs []string
 	for attempt := 0; attempt < 5; attempt++ {
 		assignUsage(lines, amount)
+		svcByKey := map[string]string{}
 		var usage []bcmtypes.BatchCreateWorkloadEstimateUsageEntry
 		for i := range lines {
 			if lines[i].Amount == nil || *lines[i].Amount == 0 {
@@ -68,8 +70,10 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, p
 				svc = *lines[i].ServiceCode
 			}
 			fmt.Printf("adding service %s cost %.2f\n", svc, cost)
-			lines[i].Key = aws.String(strconv.Itoa(len(usage) + 1))
+			key := strconv.Itoa(len(usage) + 1)
+			lines[i].Key = aws.String(key)
 			lines[i].UsageAccountId = aws.String(c.accountID)
+			svcByKey[key] = svc
 			usage = append(usage, lines[i].BatchCreateWorkloadEstimateUsageEntry)
 		}
 
@@ -91,6 +95,14 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, p
 			})
 			if err2 != nil {
 				return "", err2
+			}
+			if len(out.Errors) > 0 {
+				var msgs []string
+				for _, e := range out.Errors {
+					svc := svcByKey[aws.ToString(e.Key)]
+					msgs = append(msgs, fmt.Sprintf("%s: %s", svc, aws.ToString(e.ErrorMessage)))
+				}
+				return "", fmt.Errorf("usage creation failed: %s", strings.Join(msgs, "; "))
 			}
 			for _, r := range out.Items {
 				if r.Id != nil {
