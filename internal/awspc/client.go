@@ -254,7 +254,6 @@ func assignUsage(lines []usageLine, amount float64) {
 				total += units * lines[i].price
 			}
 		}
-		services[svc] = append(services[svc], i)
 	}
 	if diff := amount - total; math.Abs(diff) > 1e-6 {
 		for i := range lines {
