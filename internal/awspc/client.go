@@ -215,7 +215,7 @@ func defaultEntries(region, profile string) []usageLine {
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 				ServiceCode: aws.String("AmazonRDS"),
 				UsageType:   aws.String("InstanceUsage:db.m7g.large"),
-				Operation:   aws.String("CreateDBInstance"),
+				Operation:   aws.String("CreateDBInstance:0014"),
 			},
 			price: 0.206, // per hour
 		},
@@ -230,7 +230,7 @@ func defaultEntries(region, profile string) []usageLine {
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 				ServiceCode: aws.String("AWSEvents"),
-				UsageType:   aws.String("Event-64K-Chunks"),
+				UsageType:   aws.String(prefix + "Event-64K-Chunks"),
 				Operation:   aws.String("PutEvents"),
 			},
 			price: 0.000001, // per 64KB event chunk
@@ -238,8 +238,8 @@ func defaultEntries(region, profile string) []usageLine {
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 				ServiceCode: aws.String("AmazonStates"),
-				UsageType:   aws.String("StateTransition"),
-				Operation:   aws.String("StartExecution"),
+				UsageType:   aws.String(prefix + "StateTransition"),
+				Operation:   aws.String(""),
 			},
 			price: 0.000025, // per state transition
 		},
@@ -247,7 +247,7 @@ func defaultEntries(region, profile string) []usageLine {
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 				ServiceCode: aws.String("AmazonElastiCache"),
 				UsageType:   aws.String("NodeUsage:cache.t4g.small"),
-				Operation:   aws.String("CreateCacheCluster"),
+				Operation:   aws.String("CreateCacheCluster:0002"),
 			},
 			price: 0.034, // per node hour
 		},
