@@ -127,4 +127,5 @@ func slugify(s string) string {
 	re = regexp.MustCompile(`-+`)
 	s = re.ReplaceAllString(s, "-")
 	return strings.Trim(s, "-")
+
 }
