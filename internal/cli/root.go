@@ -12,12 +12,12 @@ func NewRoot() *cobra.Command {
 	factory.Register(commands.MapCommand{})
 
 	root := &cobra.Command{
-		Use:   "seidor-aws-cli",
-		Short: "Automation for AWS MAP incentives",
+		Use:   "seidor-cloud",
+		Short: "Seidor Cloud automation toolkit",
 		Long: `Generate AWS Pricing Calculator estimates and MAP incentive artifacts.
 
 Example:
-  seidor-aws-cli map wizard --out ./out`,
+  seidor-cloud map wizard --out ./out`,
 	}
 
 	if c, err := factory.Build("map"); err == nil {

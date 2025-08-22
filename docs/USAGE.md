@@ -1,11 +1,11 @@
-# seidor-aws-cli Uso
+# seidor-cloud Uso
 
-Este guia demonstra como gerar artefatos de incentivo MAP e um estimate no AWS Pricing Calculator usando o `seidor-aws-cli`.
+Este guia demonstra como gerar artefatos de incentivo MAP e um estimate no AWS Pricing Calculator usando o `seidor-cloud`.
 
 ## Execução rápida
 
 ```bash
-seidor-aws-cli map wizard --out ./out
+seidor-cloud map wizard --out ./out
 ```
 
 O assistente interativo solicitará:
@@ -13,7 +13,7 @@ O assistente interativo solicitará:
 1. Nome do cliente
 2. Descrição da oportunidade
 3. Região AWS
-4. Perfil da workload
+4. Template da solução
 5. Valor de ARR
 
 Com essas informações a ferramenta:

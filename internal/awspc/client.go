@@ -12,11 +12,12 @@ import (
 	bcm "github.com/aws/aws-sdk-go-v2/service/bcmpricingcalculator"
 	bcmtypes "github.com/aws/aws-sdk-go-v2/service/bcmpricingcalculator/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/pterm/pterm"
 )
 
 // Client defines subset of AWS Pricing Calculator API used.
 type Client interface {
-	CreateWorkloadEstimate(ctx context.Context, title, region, profile string, amount float64) (string, error)
+	CreateWorkloadEstimate(ctx context.Context, title, region, template string, amount float64) (string, error)
 }
 
 // New tries to create a real AWS Pricing Calculator client.
@@ -40,7 +41,7 @@ type AWSClient struct {
 }
 
 // CreateWorkloadEstimate creates a workload estimate and several usage lines.
-func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, profile string, amount float64) (string, error) {
+func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, template string, amount float64) (string, error) {
 	out, err := c.svc.CreateWorkloadEstimate(ctx, &bcm.CreateWorkloadEstimateInput{
 		Name: aws.String(title),
 	})
@@ -49,7 +50,7 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, p
 	}
 	id := aws.ToString(out.Id)
 
-	lines := defaultEntries(region, profile)
+	lines := defaultEntries(region, template)
 	if len(lines) == 0 {
 		return id, nil
 	}
@@ -59,8 +60,10 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, p
 		assignUsage(lines, amount)
 		svcByKey := map[string]string{}
 		var usage []bcmtypes.BatchCreateWorkloadEstimateUsageEntry
+		pb, _ := pterm.DefaultProgressbar.WithTotal(len(lines)).WithTitle("Adding services").WithBarStyle(pterm.NewStyle(pterm.FgLightCyan)).WithRemoveWhenDone(true).Start()
 		for i := range lines {
 			if lines[i].Amount == nil || *lines[i].Amount == 0 {
+				pb.Increment()
 				continue
 			}
 			cost := *lines[i].Amount * lines[i].price
@@ -68,13 +71,15 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, p
 			if lines[i].ServiceCode != nil {
 				svc = *lines[i].ServiceCode
 			}
-			fmt.Printf("adding service %s cost %.2f\n", svc, cost)
+			pb.UpdateTitle(fmt.Sprintf("Adding service %s cost %.2f", svc, cost))
+			pb.Increment()
 			key := strconv.Itoa(len(usage) + 1)
 			lines[i].Key = aws.String(key)
 			lines[i].UsageAccountId = aws.String(c.accountID)
 			svcByKey[key] = svc
 			usage = append(usage, lines[i].BatchCreateWorkloadEstimateUsageEntry)
 		}
+		pb.Stop()
 
 		if len(prevIDs) > 0 {
 			_, err = c.svc.BatchDeleteWorkloadEstimateUsage(ctx, &bcm.BatchDeleteWorkloadEstimateUsageInput{
@@ -114,22 +119,23 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, p
 		if err != nil || est.TotalCost == nil {
 			return "", err
 		}
-		fmt.Printf("calculator total %.2f\n", *est.TotalCost)
+		pterm.Info.Printf("\rcalculator total %.2f", *est.TotalCost)
 		diff := amount - *est.TotalCost
 		if math.Abs(diff) < 0.01 {
 			break
 		}
 		amount += diff
 	}
+	pterm.Println()
 	return id, nil
 }
 
 // StubClient implements Client without calling AWS.
 type StubClient struct{}
 
-func (StubClient) CreateWorkloadEstimate(ctx context.Context, title, region, profile string, amount float64) (string, error) {
+func (StubClient) CreateWorkloadEstimate(ctx context.Context, title, region, template string, amount float64) (string, error) {
 	_ = region
-	_ = profile
+	_ = template
 	return "stub-id", nil
 }
 
@@ -153,9 +159,9 @@ func usagePrefix(region string) string {
 	}
 }
 
-func defaultEntries(region, profile string) []usageLine {
+func defaultEntries(region, template string) []usageLine {
 	prefix := usagePrefix(region)
-	if profile == "lake" {
+	if template == "generic-lake" {
 		return []usageLine{
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
@@ -209,7 +215,7 @@ func defaultEntries(region, profile string) []usageLine {
 			},
 		}
 	}
-	// transactional profile
+	// generic-reactive template
 	return []usageLine{
 		{
 			BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{

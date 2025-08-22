@@ -8,8 +8,8 @@ import (
 
 // Session represents session state.
 type Session struct {
-	Token   string `json:"token"`
-	Profile string `json:"profile"`
+	Token    string `json:"token"`
+	Template string `json:"template"`
 }
 
 // Store handles persistence in state directory.
@@ -23,7 +23,7 @@ func NewStore() (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(home, ".local", "state", "seidor-aws-cli")
+	dir := filepath.Join(home, ".local", "state", "seidor-cloud")
 	os.MkdirAll(dir, 0o755)
 	return &Store{path: filepath.Join(dir, "session.json")}, nil
 }
