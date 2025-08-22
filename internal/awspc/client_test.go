@@ -3,7 +3,6 @@ package awspc
 import (
 	"math"
 	"testing"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	bcmtypes "github.com/aws/aws-sdk-go-v2/service/bcmpricingcalculator/types"
 )
