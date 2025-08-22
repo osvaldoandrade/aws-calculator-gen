@@ -179,9 +179,9 @@ func defaultEntries(region, profile string) []usageLine {
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
 					ServiceCode: aws.String("AWSGlue"),
 					UsageType:   aws.String(prefix + "ETL-Flex-DPU-Hour"),
-					Operation:   aws.String("FlexJobRun"),
+					Operation:   aws.String("FlexJobrun"),
 				},
-				price: 0.44, // per DPU-hour
+				price: 0.29, // per DPU-hour
 			},
 			{
 				BatchCreateWorkloadEstimateUsageEntry: bcmtypes.BatchCreateWorkloadEstimateUsageEntry{
