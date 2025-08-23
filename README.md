@@ -7,7 +7,8 @@ Command‑line utility to generate AWS Pricing Calculator estimates and MAP ince
 - Create official AWS Pricing Calculator estimates
 - Produce MAP funding summaries in Markdown, Excel and text formats
 - Interactive wizard for quick data collection
-- Falls back to BILL when the AWS Pricing Calculator quota is exceeded
+- Falls back to Bill estimates when the AWS Pricing Calculator can't create a workload estimate
+
 
 ## Installation
 
