@@ -3,84 +3,141 @@ package calculator
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"github.com/go-playground/validator/v10"
+	"golang.org/x/exp/slog"
 )
 
-// Client wraps a chromedp browser instance for interacting with the AWS pricing calculator.
-type Client struct {
+var validate = validator.New()
+
+// Options carries configuration for the crawling client.
+type Options struct {
+	Headless bool
+	Debug    bool
+	Logger   *slog.Logger // required
+}
+
+// Client models interactions with the AWS Pricing Calculator UI.
+type Client interface {
+	NewEstimate(ctx context.Context, name, currency, region string) error
+	AddS3(ctx context.Context, p S3Params) (LineItem, error)
+	ExportShareURL(ctx context.Context) (string, error)
+	Close(ctx context.Context) error
+}
+
+// calculatorClient is a minimal chromedp-based crawler used to drive the
+// public AWS Pricing Calculator UI. Only the S3 service is implemented for now;
+// other services can be added following the same pattern.
+type calculatorClient struct {
+	opts   Options
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
-// Open launches a headless Chrome instance and returns a Client.
-func Open(parent context.Context) (*Client, error) {
-	// Allocate a new Chrome instance with sensible defaults for headless execution.
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.Headless,
-		chromedp.DisableGPU,
-		chromedp.NoFirstRun,
-		chromedp.NoDefaultBrowserCheck,
-	)
-
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(parent, opts...)
-	ctx, cancelCtx := chromedp.NewContext(allocCtx)
-
-	// Ensure the browser starts correctly.
-	if err := chromedp.Run(ctx); err != nil {
-		cancelCtx()
-		cancelAlloc()
-		return nil, err
+// NewClient initializes a new crawler instance.
+func NewClient(opts Options) (Client, error) {
+	if opts.Logger == nil {
+		return nil, fmt.Errorf("logger required")
 	}
-
-	return &Client{ctx: ctx, cancel: func() {
-		cancelCtx()
-		cancelAlloc()
-	}}, nil
+	allocOpts := chromedp.DefaultExecAllocatorOptions[:]
+	if opts.Headless || !opts.Debug {
+		allocOpts = append(allocOpts, chromedp.Flag("headless", true))
+	}
+	allocCtx, _ := chromedp.NewExecAllocator(context.Background(), allocOpts...)
+	ctx, cancel := chromedp.NewContext(allocCtx)
+	return &calculatorClient{opts: opts, ctx: ctx, cancel: cancel}, nil
 }
 
-// Close closes the browser and releases all associated resources.
-func (c *Client) Close() error {
-	if c.cancel != nil {
-		c.cancel()
-		c.cancel = nil
+// Common carries fields shared across service parameter structs.
+type Common struct {
+	Region string `validate:"required"`
+}
+
+// S3Params defines parameters for Amazon S3.
+type S3Params struct {
+	Common
+	StorageClass   string  `validate:"required"`
+	StorageGB      float64 `validate:"gte=0"`
+	PUTRequestsMln float64
+	GETRequestsMln float64
+	DataOutGB      float64
+}
+
+// LineItem represents a service entry in the estimate.
+type LineItem struct {
+	Service    string
+	Title      string
+	MonthlyUSD float64
+}
+
+// NewEstimate opens the calculator and creates a new estimate with the given
+// title, currency and region.
+func (c *calculatorClient) NewEstimate(ctx context.Context, name, currency, region string) error {
+	if err := chromedp.Run(c.ctx, chromedp.Navigate("https://calculator.aws/")); err != nil {
+		return err
+	}
+	if err := chromedp.Run(c.ctx, chromedp.Click(`text="Create estimate"`, chromedp.NodeVisible)); err != nil {
+		return err
+	}
+	if currency != "" {
+		_ = chromedp.Run(c.ctx, chromedp.SetValue(`#currency`, currency))
+	}
+	if name != "" {
+		_ = chromedp.Run(c.ctx, chromedp.SetValue(`#estimateName`, name))
+	}
+	if region != "" {
+		_ = chromedp.Run(c.ctx, chromedp.SetValue(`#region`, region))
 	}
 	return nil
 }
 
-// NewEstimate opens the calculator site and starts a new estimate.
-func (c *Client) NewEstimate() error {
-	return chromedp.Run(c.ctx,
-		chromedp.Navigate("https://calculator.aws/#/createCalculator"),
-		chromedp.WaitVisible(`body`, chromedp.ByQuery),
-	)
-}
-
-// S3Params describes the input parameters for adding an S3 service line.
-type S3Params struct {
-	StorageGB         float64
-	PUTRequests       int
-	GETRequests       int
-	DataTransferOutGB float64
-}
-
-// AddS3 adds an S3 service line to the current estimate using the provided parameters.
-func (c *Client) AddS3(p S3Params) error {
-	tasks := chromedp.Tasks{
-		// Open the add service dialog and choose S3.
-		chromedp.Click(`button[aria-label="Add service"]`, chromedp.ByQuery),
-		chromedp.Sleep(500 * time.Millisecond),
-		chromedp.Click(`//span[contains(., "Amazon Simple Storage Service (S3)")]`, chromedp.BySearch),
-		chromedp.Sleep(500 * time.Millisecond),
-
-		// Fill out the form fields. Selectors may need to be adjusted if AWS updates the UI.
-		chromedp.SetValue(`input[name="storageAmount"]`, fmt.Sprintf("%.2f", p.StorageGB), chromedp.ByQuery),
-		chromedp.SetValue(`input[name="putRequests"]`, fmt.Sprintf("%d", p.PUTRequests), chromedp.ByQuery),
-		chromedp.SetValue(`input[name="getRequests"]`, fmt.Sprintf("%d", p.GETRequests), chromedp.ByQuery),
-		chromedp.SetValue(`input[name="dataTransferOut"]`, fmt.Sprintf("%.2f", p.DataTransferOutGB), chromedp.ByQuery),
-
-		chromedp.Click(`button[aria-label="Add to my estimate"]`, chromedp.ByQuery),
+// AddS3 adds a minimal S3 line item to the estimate.
+func (c *calculatorClient) AddS3(ctx context.Context, p S3Params) (LineItem, error) {
+	if err := validate.Struct(p); err != nil {
+		return LineItem{}, err
 	}
-	return chromedp.Run(c.ctx, tasks)
+	url := "https://calculator.aws/#/createCalculator/S3"
+	if err := chromedp.Run(c.ctx, chromedp.Navigate(url)); err != nil {
+		return LineItem{}, err
+	}
+	if err := chromedp.Run(c.ctx, chromedp.SetValue(`#s3-storage-class`, p.StorageClass)); err != nil {
+		return LineItem{}, err
+	}
+	if err := chromedp.Run(c.ctx, chromedp.SetValue(`#s3-storage-amount`, strconv.FormatFloat(p.StorageGB, 'f', -1, 64))); err != nil {
+		return LineItem{}, err
+	}
+	if err := chromedp.Run(c.ctx, chromedp.Click(`text="Add to my estimate"`)); err != nil {
+		return LineItem{}, err
+	}
+	return LineItem{Service: "S3", Title: "Amazon S3"}, nil
+}
+
+// ExportShareURL clicks through the UI to obtain a public share link.
+func (c *calculatorClient) ExportShareURL(ctx context.Context) (string, error) {
+	if err := chromedp.Run(c.ctx, chromedp.Navigate("https://calculator.aws/#/estimate")); err != nil {
+		return "", err
+	}
+	if err := chromedp.Run(c.ctx, chromedp.Click(`text="Share"`, chromedp.NodeVisible)); err != nil {
+		return "", err
+	}
+	time.Sleep(time.Second)
+	var link string
+	if err := chromedp.Run(c.ctx, chromedp.AttributeValue(`input[value^="https://calculator.aws"]`, "value", &link, nil)); err != nil {
+		return "", err
+	}
+	if link == "" {
+		return "", fmt.Errorf("share url not found")
+	}
+	return link, nil
+}
+
+// Close releases browser resources.
+func (c *calculatorClient) Close(ctx context.Context) error {
+	if c.cancel != nil {
+		c.cancel()
+	}
+	return nil
 }

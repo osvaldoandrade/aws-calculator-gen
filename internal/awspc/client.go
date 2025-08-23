@@ -17,13 +17,14 @@ import (
 	bcm "github.com/aws/aws-sdk-go-v2/service/bcmpricingcalculator"
 	bcmtypes "github.com/aws/aws-sdk-go-v2/service/bcmpricingcalculator/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	calc "github.com/example/seidor-aws-cli/pkg/calculator"
 	"github.com/pterm/pterm"
+	"golang.org/x/exp/slog"
 )
 
 // Client defines subset of AWS Pricing Calculator API used.
 type Client interface {
 	CreateWorkloadEstimate(ctx context.Context, title, region, template string, amount float64) (string, error)
-	CreateBillEstimate(ctx context.Context, title string) (string, error)
 }
 
 // New tries to create a real AWS Pricing Calculator client.
@@ -148,35 +149,6 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, t
 	return link, nil
 }
 
-// CreateBillEstimate creates a bill estimate using the first ready bill scenario.
-func (c *AWSClient) CreateBillEstimate(ctx context.Context, title string) (string, error) {
-	out, err := c.svc.ListBillScenarios(ctx, &bcm.ListBillScenariosInput{Filters: []bcmtypes.ListBillScenariosFilter{{
-		Name:   bcmtypes.ListBillScenariosFilterNameStatus,
-		Values: []string{string(bcmtypes.BillScenarioStatusReady)},
-	}}})
-	if err != nil {
-		return "", err
-	}
-	if len(out.Items) == 0 || out.Items[0].Id == nil {
-		return "", fmt.Errorf("no bill scenarios available")
-	}
-	res, err := c.svc.CreateBillEstimate(ctx, &bcm.CreateBillEstimateInput{
-		Name:           aws.String(title),
-		BillScenarioId: out.Items[0].Id,
-	})
-	if err != nil {
-		return "", err
-	}
-	id := aws.ToString(res.Id)
-	baseLink := fmt.Sprintf("https://calculator.aws/#/bill-estimate?id=%s", id)
-	link, err2 := c.shareBillEstimate(ctx, id)
-	if err2 != nil {
-		pterm.Warning.Printf("share bill estimate failed: %v\n", err2)
-		return baseLink, nil
-	}
-	return link, nil
-}
-
 func (c *AWSClient) shareEstimate(ctx context.Context, id string) (string, error) {
 	url := fmt.Sprintf("https://calculator.aws/pricing-calculator/api/estimates/%s/share", id)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
@@ -212,39 +184,36 @@ func (c *AWSClient) shareEstimate(ctx context.Context, id string) (string, error
 	return out.ShareURL, nil
 }
 
-func (c *AWSClient) shareBillEstimate(ctx context.Context, id string) (string, error) {
-	url := fmt.Sprintf("https://calculator.aws/pricing-calculator/api/bill-estimates/%s/share", id)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+// CreatePublicEstimate creates a shareable estimate using the public calculator by
+// driving a (stubbed) crawling client. It currently adds a minimal S3 line item.
+func CreatePublicEstimate(ctx context.Context, title, region, template string, amount float64) (string, error) {
+	_ = template
+
+	logger := slog.New(slog.NewTextHandler(io.Discard))
+	c, err := calc.NewClient(calc.Options{Logger: logger})
 	if err != nil {
 		return "", err
 	}
-	creds, err := c.cfg.Credentials.Retrieve(ctx)
+	defer c.Close(ctx)
+
+	if err := c.NewEstimate(ctx, title, "USD", region); err != nil {
+		return "", err
+	}
+
+	// Approximate desired cost using S3 Standard storage pricing.
+	const pricePerGB = 0.023
+	gb := amount / pricePerGB
+	_, _ = c.AddS3(ctx, calc.S3Params{
+		Common:       calc.Common{Region: region},
+		StorageClass: "Standard",
+		StorageGB:    gb,
+	})
+
+	link, err := c.ExportShareURL(ctx)
 	if err != nil {
 		return "", err
 	}
-	signer := v4.NewSigner()
-	if err := signer.SignHTTP(ctx, creds, req, "", "bcm-pricing-calculator", "us-east-1", time.Now()); err != nil {
-		return "", err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("share request failed: %s: %s", resp.Status, string(b))
-	}
-	var out struct {
-		ShareURL string `json:"shareUrl"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
-	}
-	if out.ShareURL == "" {
-		return "", fmt.Errorf("share url missing")
-	}
-	return out.ShareURL, nil
+	return link, nil
 }
 
 // StubClient implements Client without calling AWS.
@@ -254,10 +223,6 @@ func (StubClient) CreateWorkloadEstimate(ctx context.Context, title, region, tem
 	_ = region
 	_ = template
 	return "https://calculator.aws/#/estimate?id=stub-id", nil
-}
-
-func (StubClient) CreateBillEstimate(ctx context.Context, title string) (string, error) {
-	return "https://calculator.aws/#/bill-estimate?id=stub-id", nil
 }
 
 type usageLine struct {
