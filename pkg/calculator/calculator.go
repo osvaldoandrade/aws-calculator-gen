@@ -47,7 +47,14 @@ func NewClient(opts Options) (Client, error) {
 		allocOpts = append(allocOpts, chromedp.Flag("headless", true))
 	}
 	allocCtx, _ := chromedp.NewExecAllocator(context.Background(), allocOpts...)
-	ctx, cancel := chromedp.NewContext(allocCtx)
+	logf := func(format string, a ...any) {
+		opts.Logger.Debug(fmt.Sprintf(format, a...))
+	}
+	ctxOpts := []chromedp.ContextOption{chromedp.WithLogf(logf)}
+	if opts.Debug {
+		ctxOpts = append(ctxOpts, chromedp.WithDebugf(logf))
+	}
+	ctx, cancel := chromedp.NewContext(allocCtx, ctxOpts...)
 	return &calculatorClient{opts: opts, ctx: ctx, cancel: cancel}, nil
 }
 

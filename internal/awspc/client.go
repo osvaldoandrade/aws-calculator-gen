@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -189,28 +190,36 @@ func (c *AWSClient) shareEstimate(ctx context.Context, id string) (string, error
 func CreatePublicEstimate(ctx context.Context, title, region, template string, amount float64) (string, error) {
 	_ = template
 
-	logger := slog.New(slog.NewTextHandler(io.Discard))
-	c, err := calc.NewClient(calc.Options{Logger: logger})
+	logger := slog.New(slog.NewTextHandler(os.Stderr))
+	c, err := calc.NewClient(calc.Options{Logger: logger, Debug: true, Headless: true})
 	if err != nil {
 		return "", err
 	}
 	defer c.Close(ctx)
 
+	logger.Info("creating estimate")
 	if err := c.NewEstimate(ctx, title, "USD", region); err != nil {
+		logger.Error("new estimate failed", err)
 		return "", err
 	}
 
+	logger.Info("adding S3 line item")
 	// Approximate desired cost using S3 Standard storage pricing.
 	const pricePerGB = 0.023
 	gb := amount / pricePerGB
-	_, _ = c.AddS3(ctx, calc.S3Params{
+	if _, err := c.AddS3(ctx, calc.S3Params{
 		Common:       calc.Common{Region: region},
 		StorageClass: "Standard",
 		StorageGB:    gb,
-	})
+	}); err != nil {
+		logger.Error("add S3 failed", err)
+		return "", err
+	}
 
+	logger.Info("exporting share URL")
 	link, err := c.ExportShareURL(ctx)
 	if err != nil {
+		logger.Error("share export failed", err)
 		return "", err
 	}
 	return link, nil
