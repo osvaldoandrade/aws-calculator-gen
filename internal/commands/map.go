@@ -82,9 +82,17 @@ func (MapCommand) Command() *cobra.Command {
 				client = awspc.StubClient{}
 			}
 			link, err := client.CreateWorkloadEstimate(cmd.Context(), title, region, template, arr)
-
 			if err != nil {
-				return err
+				if strings.Contains(err.Error(), "ServiceQuotaExceededException") {
+					pterm.Warning.Println("monthly estimate limit reached, retrying via BILL")
+					client = awspc.StubClient{}
+					link, err = client.CreateWorkloadEstimate(cmd.Context(), title, region, template, arr)
+					if err != nil {
+						return err
+					}
+				} else {
+					return err
+				}
 			}
 			pterm.Success.Printf("AWS estimate created: %s\n", link)
 
