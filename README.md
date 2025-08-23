@@ -9,6 +9,7 @@ Command‑line utility to generate AWS Pricing Calculator estimates and MAP ince
 - Interactive wizard for quick data collection
 - Falls back to Bill estimates when the AWS Pricing Calculator can't create a workload estimate
 
+
 ## Installation
 
 Requires Go 1.24 or newer.
