@@ -23,6 +23,7 @@ import (
 // Client defines subset of AWS Pricing Calculator API used.
 type Client interface {
 	CreateWorkloadEstimate(ctx context.Context, title, region, template string, amount float64) (string, error)
+	CreateBillEstimate(ctx context.Context, title string) (string, error)
 }
 
 // New tries to create a real AWS Pricing Calculator client.
@@ -147,8 +148,72 @@ func (c *AWSClient) CreateWorkloadEstimate(ctx context.Context, title, region, t
 	return link, nil
 }
 
+// CreateBillEstimate creates a bill estimate using the first ready bill scenario.
+func (c *AWSClient) CreateBillEstimate(ctx context.Context, title string) (string, error) {
+	out, err := c.svc.ListBillScenarios(ctx, &bcm.ListBillScenariosInput{Filters: []bcmtypes.ListBillScenariosFilter{{
+		Name:   bcmtypes.ListBillScenariosFilterNameStatus,
+		Values: []string{string(bcmtypes.BillScenarioStatusReady)},
+	}}})
+	if err != nil {
+		return "", err
+	}
+	if len(out.Items) == 0 || out.Items[0].Id == nil {
+		return "", fmt.Errorf("no bill scenarios available")
+	}
+	res, err := c.svc.CreateBillEstimate(ctx, &bcm.CreateBillEstimateInput{
+		Name:           aws.String(title),
+		BillScenarioId: out.Items[0].Id,
+	})
+	if err != nil {
+		return "", err
+	}
+	id := aws.ToString(res.Id)
+	baseLink := fmt.Sprintf("https://calculator.aws/#/bill-estimate?id=%s", id)
+	link, err2 := c.shareBillEstimate(ctx, id)
+	if err2 != nil {
+		pterm.Warning.Printf("share bill estimate failed: %v\n", err2)
+		return baseLink, nil
+	}
+	return link, nil
+}
+
 func (c *AWSClient) shareEstimate(ctx context.Context, id string) (string, error) {
 	url := fmt.Sprintf("https://calculator.aws/pricing-calculator/api/estimates/%s/share", id)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return "", err
+	}
+	creds, err := c.cfg.Credentials.Retrieve(ctx)
+	if err != nil {
+		return "", err
+	}
+	signer := v4.NewSigner()
+	if err := signer.SignHTTP(ctx, creds, req, "", "bcm-pricing-calculator", "us-east-1", time.Now()); err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("share request failed: %s: %s", resp.Status, string(b))
+	}
+	var out struct {
+		ShareURL string `json:"shareUrl"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if out.ShareURL == "" {
+		return "", fmt.Errorf("share url missing")
+	}
+	return out.ShareURL, nil
+}
+
+func (c *AWSClient) shareBillEstimate(ctx context.Context, id string) (string, error) {
+	url := fmt.Sprintf("https://calculator.aws/pricing-calculator/api/bill-estimates/%s/share", id)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
 		return "", err
@@ -189,6 +254,10 @@ func (StubClient) CreateWorkloadEstimate(ctx context.Context, title, region, tem
 	_ = region
 	_ = template
 	return "https://calculator.aws/#/estimate?id=stub-id", nil
+}
+
+func (StubClient) CreateBillEstimate(ctx context.Context, title string) (string, error) {
+	return "https://calculator.aws/#/bill-estimate?id=stub-id", nil
 }
 
 type usageLine struct {

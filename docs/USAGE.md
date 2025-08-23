@@ -21,6 +21,7 @@ Com essas informações a ferramenta:
 - Cria um estimate oficial no AWS Pricing Calculator
 - Gera os arquivos `MAP.md`, `MAP.xlsx` e `MAP.txt` no diretório fornecido
 - Inclui no `MAP.txt` o link direto para o estimate gerado
+- Caso o limite ou as permissões do AWS Pricing Calculator impeçam a criação de um Workload estimate, tenta gerar um Bill estimate
 
 O estimate no AWS Pricing Calculator receberá automaticamente o nome `yyyymmdd-nome-cliente-descricao-deal-resumida`.
 
