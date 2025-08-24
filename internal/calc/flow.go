@@ -2,6 +2,7 @@ package calc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -85,8 +86,27 @@ func (o *Orchestrator) Run(ctx context.Context) (Result, error) {
 		url = fmt.Sprintf("https://calculator.aws/#/addService?region=%s", o.RegionCode)
 	}
 
+	// Navigate to calculator. Some deployments show a landing page with a
+	// "Create estimate" button before the service form becomes available.
+	if err := chromedp.Run(bctx, chromedp.Navigate(url)); err != nil {
+		return Result{}, err
+	}
+
+	// Attempt to click the optional "Create estimate" button. If the
+	// button isn't present the short timeout will expire and the error is
+	// ignored so the flow can continue.
+	{ // scoped to avoid shadowing err
+		ctx2, cancel2 := context.WithTimeout(bctx, 5*time.Second)
+		defer cancel2()
+		if err := chromedp.Run(ctx2,
+			WaitVisible(CreateEstimateXPath, true),
+			Click(CreateEstimateXPath, true),
+		); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+			return Result{}, err
+		}
+	}
+
 	err = chromedp.Run(bctx,
-		chromedp.Navigate(url),
 		WaitVisible(SearchInputCSS, false),
 		SetValue(SearchInputCSS, "EC2", false),
 		chromedp.SendKeys(SearchInputCSS, "\n", chromedp.ByQuery),
