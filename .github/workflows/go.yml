@@ -13,11 +13,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  APP_NAME: seidor-cloud
+  APP_NAME: seidor-tools
   APP_DISPLAY: "Seidor Cloud"
   BUNDLE_ID: com.seidor.cloud
   VOL_NAME: "Seidor Cloud"
-  MAIN_PKG: ./cmd/seidor-cloud
+  MAIN_PKG: ./cmd/seidor-tools
 
 jobs:
   build-test:
@@ -129,17 +129,17 @@ jobs:
           cat > "$APP/Contents/MacOS/launcher" <<'SH'
           #!/bin/bash
           set -euo pipefail
-          BIN_SRC="$(dirname "$0")/../Resources/seidor-cloud"
+          BIN_SRC="$(dirname "$0")/../Resources/seidor-tools"
           TARGET="/usr/local/bin"
           /usr/bin/osascript <<OSA
-          do shell script "mkdir -p '${TARGET}' && install -m 0755 '${BIN_SRC}' '${TARGET}/seidor-cloud' && xattr -d com.apple.quarantine '${TARGET}/seidor-cloud' || true" with administrator privileges
+          do shell script "mkdir -p '${TARGET}' && install -m 0755 '${BIN_SRC}' '${TARGET}/seidor-tools' && xattr -d com.apple.quarantine '${TARGET}/seidor-tools' || true" with administrator privileges
           OSA
           /usr/bin/osascript -e 'display dialog "Seidor Cloud instalado em /usr/local/bin." buttons {"OK"} default button 1 with icon note'
           SH
           chmod +x "$APP/Contents/MacOS/launcher"
 
           # Binário universal embutido
-          cp dist/${APP_NAME} "$APP/Contents/Resources/seidor-cloud"
+          cp dist/${APP_NAME} "$APP/Contents/Resources/seidor-tools"
 
           # Ícone (opcional)
           if [ -f assets/icon.png ]; then
