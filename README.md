@@ -6,7 +6,13 @@
 seidor-tools map
 ```
 
-The command asks for basic opportunity information and attempts to create an estimate using browser automation.  The project layout follows a simple command factory architecture and uses [pterm](https://github.com/pterm/pterm) for the text UI.
+The command asks for basic opportunity information and attempts to create an estimate using browser automation.  Parameters may be supplied interactively or via the `--params` flag:
+
+```
+seidor-tools map --params customer=Acme description="Test deal" region=us-east-1 arr=1200
+```
+
+The project layout follows a simple command factory architecture and uses [pterm](https://github.com/pterm/pterm) for the text UI.
 
 > **Note**
 > The DOM automation logic is provided as a skeleton and does not fully drive the AWS Pricing Calculator.  It is intended as a starting point for further development.
@@ -28,3 +34,4 @@ make run ARGS="map"
 ```
 make test
 ```
+
