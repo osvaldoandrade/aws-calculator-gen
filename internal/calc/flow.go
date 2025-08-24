@@ -67,7 +67,12 @@ func selectInstance(target float64) (string, int, float64, float64) {
 func (o *Orchestrator) Run(ctx context.Context) (Result, error) {
 	instType, count, achieved, relErr := selectInstance(o.TargetMRR)
 
-	bctx, cancel, err := newBrowser(o.Headful)
+	timeout := o.Timeout
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+
+	bctx, cancel, err := newBrowser(ctx, o.Headful, timeout)
 	if err != nil {
 		return Result{}, err
 	}
