@@ -1,20 +1,5 @@
 package calc
 
-import (
-	"math"
-	"regexp"
-	"strconv"
-	"strings"
-)
-
-// parseUSD converts strings like "$1,234.56" into a float.
-func parseUSD(s string) (float64, error) {
-	re := regexp.MustCompile(`[0-9.,]+`)
-	m := re.FindString(s)
-	m = strings.ReplaceAll(m, ",", "")
-	return strconv.ParseFloat(m, 64)
-}
-
 func regionLabelFromCode(code string) string {
 	switch code {
 	case "us-east-1":
@@ -31,6 +16,3 @@ func regionLabelFromCode(code string) string {
 		return code
 	}
 }
-
-func ceil(v float64) float64 { return math.Ceil(v) }
-func abs(v float64) float64  { return math.Abs(v) }

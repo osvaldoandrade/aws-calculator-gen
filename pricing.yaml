@@ -1,0 +1,85 @@
+# Preços on-demand (~Linux us-east-1). O código converte hourly -> monthly (730h).
+ec2:
+  # t-series e micros
+  - name: t4g.nano
+    hourly: 0.0042
+  - name: t3a.nano
+    hourly: 0.0047
+  - name: t3.nano
+    hourly: 0.0052
+  - name: t4g.micro
+    hourly: 0.0084
+  - name: t3a.micro
+    hourly: 0.0094
+  - name: t3.micro
+    hourly: 0.0104
+
+  # mediums (usados pelo planner p/ tickets menores)
+  - name: t4g.medium
+    hourly: 0.0336
+  - name: c6g.medium
+    hourly: 0.034
+  - name: c7g.medium
+    hourly: 0.0361
+  - name: m6g.medium
+    hourly: 0.0385
+  - name: m7g.medium
+    hourly: 0.0408
+  - name: r6g.medium
+    hourly: 0.0504
+  - name: r7g.medium
+    hourly: 0.0536
+  - name: r8g.medium
+    hourly: 0.05891
+
+  # larges (muito usados na automação/seletores)
+  - name: t4g.large
+    hourly: 0.0672
+  - name: c6g.large
+    hourly: 0.068
+  - name: c7g.large
+    hourly: 0.0723
+  - name: c6a.large
+    hourly: 0.0765
+  - name: m6g.large
+    hourly: 0.077
+  - name: r6g.large
+    hourly: 0.1008
+  - name: r7g.large
+    hourly: 0.1071
+  - name: r6gd.large
+    hourly: 0.1152
+  - name: r8g.large
+    hourly: 0.11782
+
+  # xlarge / 2xlarge / 4xlarge (quando o alvo é maior)
+  - name: r6g.xlarge
+    hourly: 0.2016
+  - name: r7g.xlarge
+    hourly: 0.2142
+  - name: r6a.xlarge
+    hourly: 0.1728
+  - name: r6gd.xlarge
+    hourly: 0.2304
+  - name: r6gd.2xlarge
+    hourly: 0.4608
+  - name: r6a.2xlarge
+    hourly: 0.3456
+  - name: r6g.4xlarge
+    hourly: 0.8064
+  - name: r8g.4xlarge
+    hourly: 0.6912
+
+  # 8xlarge (amostras)
+  - name: c6g.8xlarge
+    hourly: 1.088
+  - name: c7g.8xlarge
+    hourly: 1.1562
+  - name: c6a.8xlarge
+    hourly: 1.224
+  - name: m6g.8xlarge
+    hourly: 1.232
+  - name: m7g.8xlarge
+    hourly: 1.3056
+  - name: m5a.8xlarge
+    hourly: 1.376
