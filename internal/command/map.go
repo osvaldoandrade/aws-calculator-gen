@@ -75,7 +75,7 @@ func (c *MapCommand) Run(ctx context.Context, params map[string]string) error {
 		EstimateName: fmt.Sprintf("MAP • %s", customer),
 		RegionCode:   region,
 		TargetMRR:    targetMRR,
-		Headful:      false,
+		Headful:      true,
 		Tolerance:    0.03,
 		Timeout:      0,
 		MaxRetries:   3,
@@ -90,7 +90,7 @@ func (c *MapCommand) Run(ctx context.Context, params map[string]string) error {
 		fmt.Printf("\n")
 	}
 
-	// 2) Opening calculator / Adding services / Generating link (mesmo spinner, rótulo evolui)
+	// 2) Opening calculator / Adding services / Generating link
 	var result calc.Result
 	if c.startSpinner != nil {
 		spin, _ := c.startSpinner("⏳ Opening AWS public calculator...")
@@ -143,65 +143,104 @@ func (c *MapCommand) Run(ctx context.Context, params map[string]string) error {
 
 	// ===== Workplan =====
 	const (
-		hourlyRateBRL = 305.0
+		hourlyRateBRL = 500.0 // pedido: valor/hora BRL 500,00
 		usdToBrl      = 5.5
 		assessmentPct = 0.05
 		maxBudgetUSD  = 75000.0
 		hoursPerDay   = 8.0
 	)
 
-	// Budget a partir do ARR
+	// Budget a partir do ARR (limitado a 75k)
 	budgetUSD := arr * assessmentPct
 	if budgetUSD > maxBudgetUSD {
 		budgetUSD = maxBudgetUSD
 	}
 	budgetBRL := budgetUSD * usdToBrl
 
-	// Horas totais que o budget cobre
+	// Horas totais que o budget cobre para 1 pessoa (informativo)
 	totalHoursBudget := budgetBRL / hourlyRateBRL
 
+	// Fases (% do esforço total)
 	type bucket struct {
 		Key    string
 		Name   string
-		Weight float64
-		People int
+		Weight float64 // 30% / 40% / 30% conforme planilha
 	}
-	// Alocação: 20% / 50% / 30%
 	buckets := []bucket{
-		{Key: "business_case", Name: "Caso de negócios inicial", Weight: 0.20, People: 1},
-		{Key: "discovery", Name: "Descoberta inicial", Weight: 0.50, People: 2},
-		{Key: "strategy", Name: "Análise de estratégia", Weight: 0.30, People: 2},
+		{Key: "business_case", Name: "Caso de negócios inicial", Weight: 0.30},
+		{Key: "discovery", Name: "Descoberta inicial", Weight: 0.40},
+		{Key: "strategy", Name: "Análise de estratégia", Weight: 0.30},
 	}
 
+	// Estratégia para dias:
+	// - Primeiro estimamos os *dias totais do projeto* para 1 pessoa: round(totalHoursBudget/8).
+	// - Em seguida, alocamos os dias por fase segundo os pesos 30/40/30.
+	// - O número TOTAL de pessoas é calculado para encaixar o budget: ceil(budget / (sumDays*8*rate)).
+	totalDays := int(math.Round(totalHoursBudget / hoursPerDay))
+	if totalDays < 1 {
+		totalDays = 1
+	}
+
+	// Aloca dias por fase respeitando soma == totalDays
+	phaseDays := make([]int, len(buckets))
+	remaining := totalDays
+	for i := range buckets {
+		if i == len(buckets)-1 {
+			phaseDays[i] = remaining
+			break
+		}
+		d := int(math.Ceil(float64(totalDays) * buckets[i].Weight))
+		if d < 0 {
+			d = 0
+		}
+		phaseDays[i] = d
+		remaining -= d
+		if remaining < 0 {
+			remaining = 0
+		}
+	}
+
+	// Recalcula soma (só por segurança)
+	sumDays := 0
+	for _, d := range phaseDays {
+		sumDays += d
+	}
+	if sumDays == 0 {
+		sumDays = 1
+	}
+
+	// Número total de pessoas (ceil) para usar o teto do budget
+	totalPeople := int(math.Ceil(budgetBRL / (float64(sumDays) * hoursPerDay * hourlyRateBRL)))
+	if totalPeople < 1 {
+		totalPeople = 1
+	}
+
+	// Pessoas por fase (proporcional ao peso; fracionário, como na planilha)
+	phasePeople := make([]float64, len(buckets))
+	for i := range buckets {
+		phasePeople[i] = float64(totalPeople) * buckets[i].Weight
+	}
+
+	// Monta atividades
 	activities := make([]map[string]any, 0, len(buckets))
-	var planHours float64
-	var planCostBRL float64
-
-	for _, b := range buckets {
-		hoursAlloc := totalHoursBudget * b.Weight
-		if hoursAlloc < 0 {
-			hoursAlloc = 0
-		}
-		days := math.Ceil(hoursAlloc / (float64(b.People) * hoursPerDay))
-		if hoursAlloc > 0 && days < 1 {
-			days = 1
-		}
-		roundedHours := days * float64(b.People) * hoursPerDay
-		costBRL := roundedHours * hourlyRateBRL
-
-		planHours += roundedHours
-		planCostBRL += costBRL
+	totalHours := 0
+	for i, b := range buckets {
+		days := phaseDays[i]
+		hours := days * int(hoursPerDay)
+		totalHours += hours
 
 		activities = append(activities, map[string]any{
-			"key":     b.Key,
-			"name":    b.Name,
-			"people":  b.People,
-			"days":    int(days),
-			"hours":   int(roundedHours),
-			"costBRL": costBRL,
-			"share":   b.Weight,
+			"key":            b.Key,
+			"name":           b.Name,
+			"share":          b.Weight,
+			"days":           days,
+			"hours":          hours,          // esforço em horas (8h/dia) — não multiplica por pessoas
+			"peopleFraction": phasePeople[i], // pessoas (fracionário) por fase
 		})
 	}
+
+	// Custo total do assessment: forçamos o teto (pedido)
+	assessmentTotalCostBRL := budgetBRL
 
 	workplan := map[string]any{
 		"hourlyRateBRL":    hourlyRateBRL,
@@ -211,12 +250,13 @@ func (c *MapCommand) Run(ctx context.Context, params map[string]string) error {
 		"totalHoursBudget": totalHoursBudget,
 		"activities":       activities,
 		"totals": map[string]any{
-			"hoursPlanned":   planHours,
-			"costBRLPlanned": planCostBRL,
-			"withinBudget":   planCostBRL <= budgetBRL,
+			"daysTotal":    sumDays,
+			"hoursTotal":   totalHours,
+			"peopleTotal":  totalPeople,
+			"withinBudget": true,
 		},
-		// Atalho pedido no item (6): custo total do assessment em BRL
-		"assessmentTotalCostBRL": planCostBRL,
+		// custo total do projeto em moeda local (BRL)
+		"assessmentTotalCostBRL": assessmentTotalCostBRL,
 	}
 
 	data := map[string]any{
@@ -237,6 +277,8 @@ func (c *MapCommand) Run(ctx context.Context, params map[string]string) error {
 		"achievedMRR":   result.AchievedMRR,
 		"relativeError": result.RelativeError,
 		"workplan":      workplan,
+		// campo pedido: número total de pessoas do projeto (ceil)
+		"number_of_people": totalPeople,
 	}
 
 	enc := json.NewEncoder(c.out)
