@@ -25,6 +25,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Ensure pricing.yaml exists
+        run: |
+          test -f pricing.yaml || { echo "pricing.yaml não encontrado na raiz do repo"; exit 1; }
       - name: Set up Go
         uses: actions/setup-go@v5
         with: { go-version: '1.22', cache: true }
@@ -77,6 +80,9 @@ jobs:
       VERSION: ${{ needs.tag.outputs.VERSION }}
     steps:
       - uses: actions/checkout@v4
+      - name: Ensure pricing.yaml exists
+        run: |
+          test -f pricing.yaml || { echo "pricing.yaml não encontrado na raiz do repo"; exit 1; }
       - name: Set up Go
         uses: actions/setup-go@v5
         with: { go-version: '1.22', cache: true }
@@ -97,8 +103,8 @@ jobs:
           chmod +x dist/${APP_NAME}
           file dist/${APP_NAME}
 
-      # Build proper .app bundle (launcher + Info.plist + icon)
-      - name: Create .app bundle (installs to /usr/local/bin)
+      # Build proper .app bundle (launcher + Info.plist + icon + pricing.yaml + wrapper)
+      - name: Create .app bundle (installs libexec + share + wrapper)
         run: |
           APP="${APP_DISPLAY}.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -125,21 +131,45 @@ jobs:
           </plist>
           PLIST
 
-          # Launcher (bash) — instala SEMPRE em /usr/local/bin
+          # Launcher (bash) — instala em libexec, share e cria wrapper em /usr/local/bin
           cat > "$APP/Contents/MacOS/launcher" <<'SH'
           #!/bin/bash
           set -euo pipefail
           BIN_SRC="$(dirname "$0")/../Resources/seidor-tools"
-          TARGET="/usr/local/bin"
+          PRICING_SRC="$(dirname "$0")/../Resources/pricing.yaml"
+          WRAP_SRC="$(dirname "$0")/../Resources/wrapper.sh"
+
+          TARGET_BIN_DIR="/usr/local/libexec/seidor-tools"
+          TARGET_SHARE_DIR="/usr/local/share/seidor-tools"
+          TARGET_LINK="/usr/local/bin/seidor-tools"
+
           /usr/bin/osascript <<OSA
-          do shell script "mkdir -p '${TARGET}' && install -m 0755 '${BIN_SRC}' '${TARGET}/seidor-tools' && xattr -d com.apple.quarantine '${TARGET}/seidor-tools' || true" with administrator privileges
+          do shell script "mkdir -p '${TARGET_BIN_DIR}' '${TARGET_SHARE_DIR}' && \
+          install -m 0755 '${BIN_SRC}' '${TARGET_BIN_DIR}/seidor-tools' && \
+          install -m 0644 '${PRICING_SRC}' '${TARGET_SHARE_DIR}/pricing.yaml' && \
+          install -m 0755 '${WRAP_SRC}' '${TARGET_LINK}' && \
+          xattr -d com.apple.quarantine '${TARGET_BIN_DIR}/seidor-tools' || true && \
+          xattr -d com.apple.quarantine '${TARGET_LINK}' || true" with administrator privileges
           OSA
-          /usr/bin/osascript -e 'display dialog "Seidor Cloud instalado em /usr/local/bin." buttons {"OK"} default button 1 with icon note'
+
+          /usr/bin/osascript -e 'display dialog "Seidor Cloud instalado. Binário em /usr/local/libexec/seidor-tools, wrapper em /usr/local/bin e pricing.yaml em /usr/local/share/seidor-tools." buttons {"OK"} default button 1 with icon note'
           SH
           chmod +x "$APP/Contents/MacOS/launcher"
 
           # Binário universal embutido
           cp dist/${APP_NAME} "$APP/Contents/Resources/seidor-tools"
+
+          # pricing.yaml embutido
+          cp pricing.yaml "$APP/Contents/Resources/pricing.yaml"
+
+          # Wrapper embutido (executa o binário real com variável EC2_PRICING_YAML)
+          cat > "$APP/Contents/Resources/wrapper.sh" <<'WRAP'
+          #!/bin/bash
+          set -euo pipefail
+          export EC2_PRICING_YAML="/usr/local/share/seidor-tools/pricing.yaml"
+          exec /usr/local/libexec/seidor-tools/seidor-tools "$@"
+          WRAP
+          chmod +x "$APP/Contents/Resources/wrapper.sh"
 
           # Ícone (opcional)
           if [ -f assets/icon.png ]; then
@@ -185,6 +215,9 @@ jobs:
     needs: tag
     steps:
       - uses: actions/checkout@v4
+      - name: Ensure pricing.yaml exists
+        run: |
+          test -f pricing.yaml || { echo "pricing.yaml não encontrado na raiz do repo"; exit 1; }
       - name: Set up Go
         uses: actions/setup-go@v5
         with: { go-version: '1.22', cache: true }
@@ -192,15 +225,45 @@ jobs:
       - name: Build linux/amd64
         env: { GOOS: linux, GOARCH: amd64, CGO_ENABLED: 0 }
         run: |
-          mkdir -p dist pkg/linux/amd64
+          mkdir -p dist
           go build -trimpath -ldflags="-s -w -X main.version=${{ needs.tag.outputs.VERSION }}" -o dist/${APP_NAME}_linux_amd64 ${MAIN_PKG}
-          cp dist/${APP_NAME}_linux_amd64 pkg/linux/amd64/${APP_NAME}
+
+          # Estrutura do pacote (amd64)
+          mkdir -p pkg/linux/amd64/usr/local/libexec/seidor-tools
+          mkdir -p pkg/linux/amd64/usr/local/share/seidor-tools
+          mkdir -p pkg/linux/amd64/usr/local/bin
+
+          cp dist/${APP_NAME}_linux_amd64 pkg/linux/amd64/usr/local/libexec/seidor-tools/seidor-tools
+          cp pricing.yaml pkg/linux/amd64/usr/local/share/seidor-tools/pricing.yaml
+
+          cat > pkg/linux/amd64/usr/local/bin/seidor-tools <<'SH'
+          #!/bin/bash
+          set -euo pipefail
+          export EC2_PRICING_YAML="/usr/local/share/seidor-tools/pricing.yaml"
+          exec /usr/local/libexec/seidor-tools/seidor-tools "$@"
+          SH
+          chmod 0755 pkg/linux/amd64/usr/local/bin/seidor-tools
+
       - name: Build linux/arm64
         env: { GOOS: linux, GOARCH: arm64, CGO_ENABLED: 0 }
         run: |
-          mkdir -p pkg/linux/arm64
           go build -trimpath -ldflags="-s -w -X main.version=${{ needs.tag.outputs.VERSION }}" -o dist/${APP_NAME}_linux_arm64 ${MAIN_PKG}
-          cp dist/${APP_NAME}_linux_arm64 pkg/linux/arm64/${APP_NAME}
+
+          # Estrutura do pacote (arm64)
+          mkdir -p pkg/linux/arm64/usr/local/libexec/seidor-tools
+          mkdir -p pkg/linux/arm64/usr/local/share/seidor-tools
+          mkdir -p pkg/linux/arm64/usr/local/bin
+
+          cp dist/${APP_NAME}_linux_arm64 pkg/linux/arm64/usr/local/libexec/seidor-tools/seidor-tools
+          cp pricing.yaml pkg/linux/arm64/usr/local/share/seidor-tools/pricing.yaml
+
+          cat > pkg/linux/arm64/usr/local/bin/seidor-tools <<'SH'
+          #!/bin/bash
+          set -euo pipefail
+          export EC2_PRICING_YAML="/usr/local/share/seidor-tools/pricing.yaml"
+          exec /usr/local/libexec/seidor-tools/seidor-tools "$@"
+          SH
+          chmod 0755 pkg/linux/arm64/usr/local/bin/seidor-tools
 
       - name: Install fpm
         run: |
@@ -210,14 +273,18 @@ jobs:
 
       - name: Package RPMs & Upload
         run: |
+          # amd64
           fpm -s dir -t rpm -n ${APP_NAME} -v ${{ needs.tag.outputs.VERSION }} -a x86_64 --license MIT \
             --description "${APP_DISPLAY}" --vendor "${{ github.repository_owner }}" \
             --url "https://github.com/${{ github.repository }}" \
-            pkg/linux/amd64/${APP_NAME}=/usr/local/bin/${APP_NAME}
+            -C pkg/linux/amd64 usr/local/bin usr/local/libexec usr/local/share
+
+          # arm64
           fpm -s dir -t rpm -n ${APP_NAME} -v ${{ needs.tag.outputs.VERSION }} -a aarch64 --license MIT \
             --description "${APP_DISPLAY}" --vendor "${{ github.repository_owner }}" \
             --url "https://github.com/${{ github.repository }}" \
-            pkg/linux/arm64/${APP_NAME}=/usr/local/bin/${APP_NAME}
+            -C pkg/linux/arm64 usr/local/bin usr/local/libexec usr/local/share
+
           mv ${APP_NAME}-${{ needs.tag.outputs.VERSION }}-1.x86_64.rpm dist/${APP_NAME}_${{ needs.tag.outputs.VERSION }}_linux_x86_64.rpm
           mv ${APP_NAME}-${{ needs.tag.outputs.VERSION }}-1.aarch64.rpm dist/${APP_NAME}_${{ needs.tag.outputs.VERSION }}_linux_aarch64.rpm
           (cd dist && shasum -a 256 *.rpm > SHA256SUMS.rpm.txt)
