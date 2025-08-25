@@ -74,7 +74,12 @@ func (o *Orchestrator) Run(ctx context.Context) (Result, error) {
 
 	if fp, err := os.OpenFile("seidor-tools.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
 		log.SetOutput(fp)
-		defer fp.Close()
+		defer func(fp *os.File) {
+			err := fp.Close()
+			if err != nil {
+				log.Printf("Error: %s", err)
+			}
+		}(fp)
 	}
 
 	// 1) Launch Chrome
@@ -304,8 +309,8 @@ func handleShareConsent(ctx context.Context) string {
 
 	// 2) Garante modal aberto e tenta ler sem clicar
 	_ = ensureShareModalOpen(ctx)
-	if url := tryReadShareURLFromModal(ctx); looksLikeShareURL(url) {
-		return url
+	if sharedUrl := tryReadShareURLFromModal(ctx); looksLikeShareURL(sharedUrl) {
+		return sharedUrl
 	}
 
 	// 3) Até 3 tentativas: clicar em "Copy", reabrir modal (se fechar) e ler o input
@@ -323,20 +328,20 @@ func handleShareConsent(ctx context.Context) string {
 		_ = chromedp.Run(ctx, chromedp.Sleep(800*time.Millisecond))
 
 		// tenta ler de imediato (caso o modal continue aberto)
-		if url := tryReadShareURLFromModal(ctx); looksLikeShareURL(url) {
-			return url
+		if sharedUrl := tryReadShareURLFromModal(ctx); looksLikeShareURL(sharedUrl) {
+			return sharedUrl
 		}
 
 		// se o modal fechou, reabra e leia
 		if ensureShareModalOpen(ctx) {
-			if url := tryReadShareURLFromModal(ctx); looksLikeShareURL(url) {
-				return url
+			if sharedUrl := tryReadShareURLFromModal(ctx); looksLikeShareURL(sharedUrl) {
+				return sharedUrl
 			}
 		}
 
 		// fallback: varredura no DOM e snapshot
-		if url := getShareURLAnywhere(ctx); looksLikeShareURL(url) {
-			return url
+		if sharedUrl := getShareURLAnywhere(ctx); looksLikeShareURL(sharedUrl) {
+			return sharedUrl
 		}
 		if snapURL := dumpAndExtract(ctx, fmt.Sprintf("(share try %d)", i)); looksLikeShareURL(snapURL) {
 			return snapURL
@@ -345,8 +350,8 @@ func handleShareConsent(ctx context.Context) string {
 
 	// Última cartada: reabrir o modal e tentar novamente a leitura direta
 	if ensureShareModalOpen(ctx) {
-		if url := tryReadShareURLFromModal(ctx); looksLikeShareURL(url) {
-			return url
+		if sharedUrl := tryReadShareURLFromModal(ctx); looksLikeShareURL(sharedUrl) {
+			return sharedUrl
 		}
 	}
 	return ""
@@ -583,28 +588,6 @@ func clickIfExists(ctx context.Context, sel string, by queryBy) bool {
 		return true
 	}
 	return false
-}
-
-func clickIfExistsReturnErr(ctx context.Context, sel string, by queryBy) error {
-	var nodes []*cdp.Node
-	opts := queryOpts(by)
-	if err := chromedp.Run(ctx, chromedp.Nodes(sel, &nodes, opts...)); err != nil || len(nodes) == 0 {
-		return fmt.Errorf("not-found")
-	}
-	_ = chromedp.Run(ctx, chromedp.ScrollIntoView(sel, opts...))
-	return chromedp.Run(ctx, chromedp.Click(sel, opts...))
-}
-
-func waitForAny(ctx context.Context, sels []selector, tries int, delay time.Duration) *selector {
-	for i := 0; i < tries; i++ {
-		for _, sel := range sels {
-			if exists(ctx, sel.s, sel.by) {
-				return &sel
-			}
-		}
-		_ = chromedp.Run(ctx, chromedp.Sleep(delay))
-	}
-	return nil
 }
 
 func exists(ctx context.Context, sel string, by queryBy) bool {
@@ -972,14 +955,6 @@ func planGreedyEC2(targetMRR float64, _ float64) []planItem {
 		}
 	}
 	return compactPlan(plan)
-}
-
-func planTotal(plan []planItem) float64 {
-	sum := 0.0
-	for _, p := range plan {
-		sum += float64(p.Count) * p.Monthly
-	}
-	return sum
 }
 
 func compactPlan(in []planItem) []planItem {
