@@ -45,19 +45,23 @@ const (
 	findServiceInputCSS       = `input[aria-label="Find Service"]`
 	ec2ConfigureXPath         = `//*[@data-cy="Amazon EC2 -button"]//button | //button[.//span[contains(normalize-space(.),'Configure Amazon EC2')]]`
 	ec2ConfigHeaderXPath      = `//h1[contains(normalize-space(),'Configure Amazon EC2')]`
-	numberInstancesInputXPath = `//input[contains(@aria-label,'Number of instances')]`
-	instanceSearchInputCSS    = `input[aria-label*="Search instance types"], input[placeholder*="Search instance types"], input[aria-label*="Search by instance name"]`
-	anyMemoryTriggerXPath     = `//*[@id='ec2enhancement']//*[contains(normalize-space(),'Any Memory')]/ancestor::*[self::button or self::div[contains(@class,'trigger')]] | //*[contains(@id,'trigger-content') and contains(normalize-space(),'Any Memory')]`
-	anyVcpuTriggerXPath       = `//*[@id='ec2enhancement']//*[contains(normalize-space(),'Any vCPUs')]/ancestor::*[self::button or self::div[contains(@class,'trigger')]] | //*[contains(@id,'trigger-content') and contains(normalize-space(),'Any vCPUs')]`
-	onDemandOptionXPath       = `//label[.//text()[contains(.,'On-Demand')]] | //input[@type='radio' and (contains(@value,'On-Demand') or contains(@aria-label,'On-Demand'))]/ancestor::label`
-	appFooterCSS              = `.appFooter`
-	saveAndAddXPath           = `//button[@data-cy='Save and add service-button' and not(@disabled)] | //button[.//span[normalize-space()='Save and add service'] and not(@disabled)]`
-	saveAndAddBtnFooterCSS    = `div.appFooter [data-cy='Save and add service-button']`
-	viewSummaryBtnCSS         = `#estimate-button`
-	editNameLinkCSS           = `a[data-cy="edit-estimate-name"]`
-	editNameLinkXPath         = `//*[@data-cy='edit-estimate-name'] | //*[normalize-space()='Edit' and (self::button or self::span or self::a)]/ancestor::a | //*[contains(@class,'myEstimate')]//*[normalize-space()='Edit']`
-	nameInputCSS              = `input[aria-label="Enter Name"]`
-	saveNameBtnXPath          = `//button[.//span[normalize-space()='Save'] and not(@disabled)]`
+	numberInstancesInputXPath = `
+		(
+		  //input[contains(translate(@aria-label,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'number of instances')]
+		)[1]`
+	instanceSearchInputCSS       = `input[aria-label*="Search instance types"], input[placeholder*="Search instance types"], input[aria-label*="Search by instance name"]`
+	anyMemoryTriggerXPath        = `//*[@id='ec2enhancement']//*[contains(normalize-space(),'Any Memory')]/ancestor::*[self::button or self::div[contains(@class,'trigger')]] | //*[contains(@id,'trigger-content') and contains(normalize-space(),'Any Memory')]`
+	anyVcpuTriggerXPath          = `//*[@id='ec2enhancement']//*[contains(normalize-space(),'Any vCPUs')]/ancestor::*[self::button or self::div[contains(@class,'trigger')]] | //*[contains(@id,'trigger-content') and contains(normalize-space(),'Any vCPUs')]`
+	onDemandOptionXPath          = `//label[.//text()[contains(.,'On-Demand')]] | //input[@type='radio' and (contains(@value,'On-Demand') or contains(@aria-label,'On-Demand'))]/ancestor::label`
+	appFooterCSS                 = `.appFooter`
+	saveAndAddXPath              = `//button[@data-cy='Save and add service-button' and not(@disabled)] | //button[.//span[normalize-space()='Save and add service'] and not(@disabled)]`
+	saveAndAddBtnFooterCSS       = `div.appFooter [data-cy='Save and add service-button']`
+	viewSummaryBtnCSS            = `#estimate-button`
+	editNameLinkCSS              = `a[data-cy="edit-estimate-name"]`
+	editNameLinkXPath            = `//*[@data-cy='edit-estimate-name'] | //*[normalize-space()='Edit' and (self::button or self::span or self::a)]/ancestor::a | //*[contains(@class,'myEstimate')]//*[normalize-space()='Edit']`
+	nameInputCSS                 = `input[aria-label="Enter Name"]`
+	saveNameBtnXPath             = `//button[.//span[normalize-space()='Save'] and not(@disabled)]`
+	numberInstancesInputCSSExact = `input[aria-label="Number of instances Enter amount"]`
 
 	// Share
 	shareBtnXPath            = `//*[@data-cy='save-and-share'] | //button[.//span[contains(normalize-space(.),'Share')]]`
@@ -72,11 +76,13 @@ const (
 func (o *Orchestrator) Run(ctx context.Context) (Result, error) {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
-	// Log somente em arquivo
 	if fp, err := os.OpenFile("seidor-tools.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
 		log.SetOutput(fp)
 		defer func(fp *os.File) {
-			_ = fp.Close()
+			err := fp.Close()
+			if err != nil {
+				log.Printf("Error: %s", err)
+			}
 		}(fp)
 	}
 
@@ -176,14 +182,15 @@ func (o *Orchestrator) Run(ctx context.Context) (Result, error) {
 		_ = ensureAnyFilters(bctx, 5*time.Second)
 		_ = ensureOnDemand(bctx, 5*time.Second)
 
+		if err := setInstanceCount(bctx, it.Count); err != nil {
+			dumpHTML(bctx, fmt.Sprintf("(set count %s failed)", it.Name))
+			return Result{}, fmt.Errorf("could not set count for %q: %w", it.Name, err)
+		}
+
 		// Select instance by exact name, then set instance count
 		if err := selectInstanceByName(bctx, it.Name, 5*time.Second); err != nil {
 			dumpHTML(bctx, fmt.Sprintf("(select %s failed)", it.Name))
 			return Result{}, fmt.Errorf("could not select instance %q: %w", it.Name, err)
-		}
-		if err := setInstanceCount(bctx, it.Count); err != nil {
-			dumpHTML(bctx, fmt.Sprintf("(set count %s failed)", it.Name))
-			return Result{}, fmt.Errorf("could not set count for %q: %w", it.Name, err)
 		}
 
 		// Save and add service, then continue to the next planned item
@@ -213,19 +220,40 @@ func (o *Orchestrator) Run(ctx context.Context) (Result, error) {
 		clickAny(bctx, []selector{{s: saveNameBtnXPath, by: byXPath}})
 	}
 
-	// 9) Open Share and deterministic link read
+	// 9) Open Share and handle consent
 	log.Printf("[9/10] Opening 'Share' modal...")
 	_ = scrollToTop(bctx)
 	if err := clickRobust(bctx, shareBtnXPath, byXPath); err != nil {
 		return Result{}, fmt.Errorf("could not open Share dialog/button: %w", err)
 	}
+	log.Printf("        Share clicked, handling consent if present...")
 	dismissCookieBanner(bctx)
-	// Se houver consentimento, aceite (best-effort)
-	_ = clickWithTimeout(bctx, shareAgreeContinueBtnCSS, byCSS, 3*time.Second)
 
-	// 10) Deterministic get link: 1s → 3s → 5s. Reabrir Share se necessário, algumas rodadas.
-	log.Printf("[10/10] Waiting for public link (deterministic backoff)...")
-	shareURL := getShareURLDeterministic(bctx, 3) // até 3 rodadas (cada uma tenta 1s/3s/5s)
+	shareURL := handleShareConsent(bctx)
+
+	// 10) Buscar link (backoff 1s → 3s → 5s; reabrir Share se necessário)
+	log.Printf("[10/10] Waiting for public link...")
+	if !looksLikeShareURL(shareURL) {
+		for _, d := range []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second} {
+			_ = chromedp.Run(bctx, chromedp.Sleep(d))
+			shareURL = getShareURLFromInputs(bctx)
+			if looksLikeShareURL(shareURL) {
+				break
+			}
+		}
+	}
+	if !looksLikeShareURL(shareURL) {
+		// reabrir Share e tentar de novo rapidamente
+		_ = clickWithTimeout(bctx, shareBtnXPath, byXPath, 3*time.Second)
+		_ = chromedp.Run(bctx, chromedp.Sleep(800*time.Millisecond))
+		shareURL = getShareURLFromInputs(bctx)
+	}
+	if !looksLikeShareURL(shareURL) {
+		shareURL = getShareURLAnywhere(bctx)
+	}
+	if !looksLikeShareURL(shareURL) {
+		shareURL = waitForShareLink(bctx, 3, 300*time.Millisecond)
+	}
 	dumpHTML(bctx, "(final snapshot)")
 
 	if strings.TrimSpace(shareURL) == "" {
@@ -262,58 +290,23 @@ func clickViewSummary(ctx context.Context) error {
 	return nil
 }
 
-// ---- Deterministic Share URL retrieval ----
-
-// getShareURLDeterministic implementa:
-// - Clica/garante o modal de Share aberto
-// - espera 1s, lê input "Copy public link"; se vazio → espera 3s; se vazio → espera 5s
-// - se ainda vazio, reabre o Share (se necessário) e repete por "rounds" vezes
-// - sem clicar em "Copy public link" (evita fechar modal na máquina lenta)
-func getShareURLDeterministic(ctx context.Context, rounds int) string {
-	if rounds < 1 {
-		rounds = 1
-	}
-	backoff := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
-
-	ensureShareOpen := func() {
-		_ = scrollToTop(ctx)
-		if !exists(ctx, shareLinkInputXPath, byXPath) && !exists(ctx, shareLinkInputCSS, byCSS) {
-			_ = clickWithTimeout(ctx, shareBtnXPath, byXPath, 3*time.Second)
-			// consentimento (se aparecer)
-			_ = clickWithTimeout(ctx, shareAgreeContinueBtnCSS, byCSS, 2*time.Second)
-		}
-	}
-
-	for r := 1; r <= rounds; r++ {
-		log.Printf("        [share/det] round %d/%d: ensure modal open and read input", r, rounds)
-		ensureShareOpen()
-
-		for _, d := range backoff {
-			_ = chromedp.Run(ctx, chromedp.Sleep(d))
-			if v := tryReadShareURLFromModal(ctx); looksLikeShareURL(v) {
-				return v
-			}
-		}
-
-		// Snapshot + tentativa de extrair do HTML (às vezes o valor está renderizado)
-		if snap := dumpAndExtract(ctx, fmt.Sprintf("(share/det round %d)", r)); looksLikeShareURL(snap) {
-			return snap
-		}
-
-		// Reabrir o modal explicitamente na próxima rodada
-		// (fecha se estiver aberto para "resetar" estado; best-effort via tecla ESC)
-		_ = chromedp.Run(ctx, chromedp.KeyEvent(kb.Escape))
-		_ = chromedp.Run(ctx, chromedp.Sleep(250*time.Millisecond))
-	}
-
-	// Fallback final: varreduras amplas no DOM
-	if v := getShareURLAnywhere(ctx); looksLikeShareURL(v) {
-		return v
-	}
-	return ""
-}
-
 // ---- Consent / Share helpers ----
+
+// Abre (ou confirma aberto) o modal de Share com timeout curto.
+func ensureShareModalOpen(ctx context.Context) bool {
+	// já está aberto?
+	if exists(ctx, shareModalTitleXPath, byXPath) || exists(ctx, shareLinkInputXPath, byXPath) {
+		return true
+	}
+	// tenta abrir
+	_ = scrollToTop(ctx)
+	if err := clickWithTimeout(ctx, shareBtnXPath, byXPath, 3*time.Second); err != nil {
+		return false
+	}
+	_ = waitVisibleWithTimeout(ctx, shareConsentDialogXPath, byXPath, 3*time.Second)
+	// título do modal ou campo de link visível?
+	return exists(ctx, shareModalTitleXPath, byXPath) || exists(ctx, shareLinkInputXPath, byXPath)
+}
 
 // Tenta ler o link diretamente do(s) input(s) do modal (sem clicar em "Copy").
 func tryReadShareURLFromModal(ctx context.Context) string {
@@ -323,6 +316,63 @@ func tryReadShareURLFromModal(ctx context.Context) string {
 	// às vezes o input está em um shadow root; tentar varredura ampla
 	if v := deepScanShareInput(ctx); looksLikeShareURL(v) {
 		return v
+	}
+	return ""
+}
+
+// Fluxo robusto: prioriza ler o link *antes* do clique; se fechar o modal, reabre e lê.
+func handleShareConsent(ctx context.Context) string {
+	// 1) Aceita consentimento (se existir) — best effort
+	_ = clickWithTimeout(ctx, shareAgreeContinueBtnCSS, byCSS, 5*time.Second)
+	dumpHTML(ctx, "(post-agree)")
+	_ = chromedp.Run(ctx, chromedp.Sleep(800*time.Millisecond))
+
+	// 2) Garante modal aberto e tenta ler sem clicar
+	_ = ensureShareModalOpen(ctx)
+	if sharedUrl := tryReadShareURLFromModal(ctx); looksLikeShareURL(sharedUrl) {
+		return sharedUrl
+	}
+
+	// 3) Até 3 tentativas: clicar em "Copy", reabrir modal (se fechar) e ler o input
+	for i := 1; i <= 3; i++ {
+		log.Printf("        [share] try %d/3: copy, reopen-if-needed, read input", i)
+
+		// clica no botão "Copy public link" se estiver visível; caso contrário tenta por texto
+		if exists(ctx, copyPublicLinkXPath, byXPath) {
+			_ = clickRobust(ctx, copyPublicLinkXPath, byXPath)
+		} else {
+			_ = deepClickButtonByText(ctx, "Copy public link")
+		}
+
+		// pequena espera para o possível fechamento do modal
+		_ = chromedp.Run(ctx, chromedp.Sleep(800*time.Millisecond))
+
+		// tenta ler de imediato (caso o modal continue aberto)
+		if sharedUrl := tryReadShareURLFromModal(ctx); looksLikeShareURL(sharedUrl) {
+			return sharedUrl
+		}
+
+		// se o modal fechou, reabra e leia
+		if ensureShareModalOpen(ctx) {
+			if sharedUrl := tryReadShareURLFromModal(ctx); looksLikeShareURL(sharedUrl) {
+				return sharedUrl
+			}
+		}
+
+		// fallback: varredura no DOM e snapshot
+		if sharedUrl := getShareURLAnywhere(ctx); looksLikeShareURL(sharedUrl) {
+			return sharedUrl
+		}
+		if snapURL := dumpAndExtract(ctx, fmt.Sprintf("(share try %d)", i)); looksLikeShareURL(snapURL) {
+			return snapURL
+		}
+	}
+
+	// Última cartada: reabrir o modal e tentar novamente a leitura direta
+	if ensureShareModalOpen(ctx) {
+		if sharedUrl := tryReadShareURLFromModal(ctx); looksLikeShareURL(sharedUrl) {
+			return sharedUrl
+		}
 	}
 	return ""
 }
@@ -777,7 +827,7 @@ func ensureOnDemand(ctx context.Context, d time.Duration) error {
 	return nil
 }
 
-// Garante que filtros "Any Memory" e "Any vCPUs" sejam ativados
+// (REPOSTO) Garante que filtros "Any Memory" e "Any vCPUs" sejam ativados
 func ensureAnyFilters(ctx context.Context, d time.Duration) error {
 	_ = clickWithTimeout(ctx, anyMemoryTriggerXPath, byXPath, d)
 	_ = chromedp.Run(ctx, chromedp.Sleep(100*time.Millisecond))
@@ -961,14 +1011,29 @@ func selectInstanceByName(ctx context.Context, instance string, timeout time.Dur
 	x := fmt.Sprintf(`//label[.//text()[contains(., '%s')]] | //span[contains(normalize-space(),'%s')]/ancestor::label | //tr[.//*[contains(normalize-space(),'%s')]]//label`, instance, instance, instance)
 	return clickWithTimeout(ctx, x, byXPath, timeout)
 }
-
 func setInstanceCount(ctx context.Context, count int) error {
 	if count < 1 {
 		count = 1
 	}
 	val := fmt.Sprintf("%d", count)
-	if exists(ctx, numberInstancesInputXPath, byXPath) {
-		return typeInto(ctx, numberInstancesInputXPath, byXPath, val)
+
+	// 1) Mesmo alvo do seu Puppeteer
+	if err := setInputValueJS(ctx, numberInstancesInputCSSExact, byCSS, val); err == nil {
+		if v, ok := readInputValue(ctx, numberInstancesInputCSSExact, byCSS); ok && strings.TrimSpace(v) == val {
+			log.Printf("        [count] set via Puppeteer-exact aria-label → %s", val)
+			return nil
+		}
 	}
-	return setInputValueJS(ctx, numberInstancesInputXPath, byXPath, val)
+
+	// 2) Fallback: nosso XPath já existente para "Number of instances"
+	if exists(ctx, numberInstancesInputXPath, byXPath) {
+		if err := setInputValueJS(ctx, numberInstancesInputXPath, byXPath, val); err == nil {
+			if v, ok := readInputValue(ctx, numberInstancesInputXPath, byXPath); ok && strings.TrimSpace(v) == val {
+				log.Printf("        [count] set via XPath(aria-label contains 'Number of instances') → %s", val)
+				return nil
+			}
+		}
+	}
+
+	return fmt.Errorf("could not set instance count to %s (no matching input)", val)
 }

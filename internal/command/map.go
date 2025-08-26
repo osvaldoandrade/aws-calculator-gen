@@ -75,7 +75,7 @@ func (c *MapCommand) Run(ctx context.Context, params map[string]string) error {
 		EstimateName: fmt.Sprintf("MAP • %s", customer),
 		RegionCode:   region,
 		TargetMRR:    targetMRR,
-		Headful:      false,
+		Headful:      true,
 		Tolerance:    0.03,
 		Timeout:      0,
 		MaxRetries:   3,
