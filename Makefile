@@ -1,17 +1,21 @@
-.RECIPEPREFIX := >
 .PHONY: build run test fmt lint
 
+BINARY := seidor-tools
+CMD_DIR := ./cmd/$(BINARY)
+ARGS ?=
+
 build:
->go build ./cmd/seidor-tools
+	@mkdir -p bin
+	go build -o bin/$(BINARY) $(CMD_DIR)
 
 run:
->go run ./cmd/seidor-tools $(ARGS)
+	go run $(CMD_DIR) $(ARGS)
 
 test:
->go test ./...
+	go test ./...
 
 fmt:
->gofmt -w $(shell find . -name *.go)
+	go fmt ./...
 
 lint:
->gofmt -l $(shell find . -name *.go)
+	@out=$$(gofmt -l -s .); if [ -n "$$out" ]; then echo "$$out"; exit 1; fi
