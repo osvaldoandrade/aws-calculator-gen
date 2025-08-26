@@ -72,7 +72,7 @@ const (
 func (o *Orchestrator) Run(ctx context.Context) (Result, error) {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
-	// Log apenas em arquivo
+	// Log somente em arquivo
 	if fp, err := os.OpenFile("seidor-tools.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
 		log.SetOutput(fp)
 		defer func(fp *os.File) {
@@ -213,31 +213,19 @@ func (o *Orchestrator) Run(ctx context.Context) (Result, error) {
 		clickAny(bctx, []selector{{s: saveNameBtnXPath, by: byXPath}})
 	}
 
-	// 9) Open Share and handle consent  (USAR timeout SEMPRE para evitar travas em hosts lentos)
+	// 9) Open Share and deterministic link read
 	log.Printf("[9/10] Opening 'Share' modal...")
 	_ = scrollToTop(bctx)
-	if err := clickWithTimeout(bctx, shareBtnXPath, byXPath, 8*time.Second); err != nil {
+	if err := clickRobust(bctx, shareBtnXPath, byXPath); err != nil {
 		return Result{}, fmt.Errorf("could not open Share dialog/button: %w", err)
 	}
-	log.Printf("        Share clicked, handling consent if present...")
 	dismissCookieBanner(bctx)
+	// Se houver consentimento, aceite (best-effort)
+	_ = clickWithTimeout(bctx, shareAgreeContinueBtnCSS, byCSS, 3*time.Second)
 
-	shareURL := handleShareConsent(bctx)
-
-	// 10) Buscar link (com fallbacks finitos)
-	log.Printf("[10/10] Waiting for public link...")
-	if !looksLikeShareURL(shareURL) {
-		shareURL = getShareURLAnywhere(bctx)
-	}
-	if !looksLikeShareURL(shareURL) {
-		// tenta ler do clipboard mais uma vez (caso o click de copy tenha ocorrido)
-		if v := tryReadClipboard(bctx, 2*time.Second); looksLikeShareURL(v) {
-			shareURL = v
-		}
-	}
-	if !looksLikeShareURL(shareURL) {
-		shareURL = waitForShareLink(bctx, 3, 300*time.Millisecond)
-	}
+	// 10) Deterministic get link: 1s → 3s → 5s. Reabrir Share se necessário, algumas rodadas.
+	log.Printf("[10/10] Waiting for public link (deterministic backoff)...")
+	shareURL := getShareURLDeterministic(bctx, 3) // até 3 rodadas (cada uma tenta 1s/3s/5s)
 	dumpHTML(bctx, "(final snapshot)")
 
 	if strings.TrimSpace(shareURL) == "" {
@@ -274,23 +262,58 @@ func clickViewSummary(ctx context.Context) error {
 	return nil
 }
 
-// ---- Consent / Share helpers ----
+// ---- Deterministic Share URL retrieval ----
 
-// Abre (ou confirma aberto) o modal de Share com timeout curto.
-func ensureShareModalOpen(ctx context.Context) bool {
-	// já está aberto?
-	if exists(ctx, shareModalTitleXPath, byXPath) || exists(ctx, shareLinkInputXPath, byXPath) {
-		return true
+// getShareURLDeterministic implementa:
+// - Clica/garante o modal de Share aberto
+// - espera 1s, lê input "Copy public link"; se vazio → espera 3s; se vazio → espera 5s
+// - se ainda vazio, reabre o Share (se necessário) e repete por "rounds" vezes
+// - sem clicar em "Copy public link" (evita fechar modal na máquina lenta)
+func getShareURLDeterministic(ctx context.Context, rounds int) string {
+	if rounds < 1 {
+		rounds = 1
 	}
-	// tenta abrir
-	_ = scrollToTop(ctx)
-	if err := clickWithTimeout(ctx, shareBtnXPath, byXPath, 4*time.Second); err != nil {
-		return false
+	backoff := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+
+	ensureShareOpen := func() {
+		_ = scrollToTop(ctx)
+		if !exists(ctx, shareLinkInputXPath, byXPath) && !exists(ctx, shareLinkInputCSS, byCSS) {
+			_ = clickWithTimeout(ctx, shareBtnXPath, byXPath, 3*time.Second)
+			// consentimento (se aparecer)
+			_ = clickWithTimeout(ctx, shareAgreeContinueBtnCSS, byCSS, 2*time.Second)
+		}
 	}
-	_ = waitVisibleWithTimeout(ctx, shareConsentDialogXPath, byXPath, 4*time.Second)
-	// título do modal ou campo de link visível?
-	return exists(ctx, shareModalTitleXPath, byXPath) || exists(ctx, shareLinkInputXPath, byXPath)
+
+	for r := 1; r <= rounds; r++ {
+		log.Printf("        [share/det] round %d/%d: ensure modal open and read input", r, rounds)
+		ensureShareOpen()
+
+		for _, d := range backoff {
+			_ = chromedp.Run(ctx, chromedp.Sleep(d))
+			if v := tryReadShareURLFromModal(ctx); looksLikeShareURL(v) {
+				return v
+			}
+		}
+
+		// Snapshot + tentativa de extrair do HTML (às vezes o valor está renderizado)
+		if snap := dumpAndExtract(ctx, fmt.Sprintf("(share/det round %d)", r)); looksLikeShareURL(snap) {
+			return snap
+		}
+
+		// Reabrir o modal explicitamente na próxima rodada
+		// (fecha se estiver aberto para "resetar" estado; best-effort via tecla ESC)
+		_ = chromedp.Run(ctx, chromedp.KeyEvent(kb.Escape))
+		_ = chromedp.Run(ctx, chromedp.Sleep(250*time.Millisecond))
+	}
+
+	// Fallback final: varreduras amplas no DOM
+	if v := getShareURLAnywhere(ctx); looksLikeShareURL(v) {
+		return v
+	}
+	return ""
 }
+
+// ---- Consent / Share helpers ----
 
 // Tenta ler o link diretamente do(s) input(s) do modal (sem clicar em "Copy").
 func tryReadShareURLFromModal(ctx context.Context) string {
@@ -300,85 +323,6 @@ func tryReadShareURLFromModal(ctx context.Context) string {
 	// às vezes o input está em um shadow root; tentar varredura ampla
 	if v := deepScanShareInput(ctx); looksLikeShareURL(v) {
 		return v
-	}
-	return ""
-}
-
-// Lê o clipboard via JS (se permitido). Nunca bloqueia indefinidamente.
-func tryReadClipboard(ctx context.Context, d time.Duration) string {
-	var v string
-	c2, cancel := context.WithTimeout(ctx, d)
-	defer cancel()
-	// Tenta API assíncrona do Clipboard; se negar permissão, retorna string vazia.
-	_ = chromedp.Run(c2, chromedp.Evaluate(`(async()=>{try{return (await navigator.clipboard.readText())||""}catch(e){return ""}})()`, &v))
-	v = strings.TrimSpace(html.UnescapeString(v))
-	if looksLikeShareURL(v) {
-		return v
-	}
-	return ""
-}
-
-// Fluxo robusto: prioriza ler o link *antes* do clique; se fechar o modal, reabre e lê.
-// Todas as interações com botões usam timeout para evitar travas em hosts lentos.
-func handleShareConsent(ctx context.Context) string {
-	// 1) Aceita consentimento (se existir) — best effort com timeout
-	_ = clickWithTimeout(ctx, shareAgreeContinueBtnCSS, byCSS, 5*time.Second)
-	dumpHTML(ctx, "(post-agree)")
-	_ = chromedp.Run(ctx, chromedp.Sleep(800*time.Millisecond))
-
-	// 2) Garante modal aberto e tenta ler sem clicar
-	_ = ensureShareModalOpen(ctx)
-	if url := tryReadShareURLFromModal(ctx); looksLikeShareURL(url) {
-		return url
-	}
-
-	// 3) Até 3 tentativas: clicar em "Copy", ler do input e/ou clipboard; reabrir modal se fechar
-	for i := 1; i <= 3; i++ {
-		log.Printf("        [share] try %d/3: copy, reopen-if-needed, read from input/clipboard", i)
-
-		// clica no botão "Copy public link" se estiver visível; caso contrário tenta por texto — SEMPRE com timeout
-		if exists(ctx, copyPublicLinkXPath, byXPath) {
-			_ = clickWithTimeout(ctx, copyPublicLinkXPath, byXPath, 5*time.Second)
-		} else {
-			_ = deepClickButtonByText(ctx, "Copy public link")
-		}
-
-		// pequena espera para UI e possível fechamento do modal
-		_ = chromedp.Run(ctx, chromedp.Sleep(900*time.Millisecond))
-
-		// 3.1 tentar ler do input imediatamente
-		if url := tryReadShareURLFromModal(ctx); looksLikeShareURL(url) {
-			return url
-		}
-		// 3.2 tentar ler do clipboard (frequentemente mais determinístico quando o modal fecha)
-		if clip := tryReadClipboard(ctx, 2*time.Second); looksLikeShareURL(clip) {
-			return clip
-		}
-
-		// 3.3 se o modal fechou, reabrir e ler
-		if ensureShareModalOpen(ctx) {
-			if url := tryReadShareURLFromModal(ctx); looksLikeShareURL(url) {
-				return url
-			}
-		}
-
-		// 3.4 fallback: varredura no DOM e snapshot
-		if url := getShareURLAnywhere(ctx); looksLikeShareURL(url) {
-			return url
-		}
-		if snapURL := dumpAndExtract(ctx, fmt.Sprintf("(share try %d)", i)); looksLikeShareURL(snapURL) {
-			return snapURL
-		}
-	}
-
-	// Última cartada: reabrir o modal e tentar novamente a leitura direta e clipboard
-	if ensureShareModalOpen(ctx) {
-		if url := tryReadShareURLFromModal(ctx); looksLikeShareURL(url) {
-			return url
-		}
-	}
-	if clip := tryReadClipboard(ctx, 2*time.Second); looksLikeShareURL(clip) {
-		return clip
 	}
 	return ""
 }
@@ -436,15 +380,10 @@ func waitForShareLink(ctx context.Context, tries int, delay time.Duration) strin
 		if v := getShareURLFromInputs(ctx); looksLikeShareURL(v) {
 			return v
 		}
-		// tenta clicar "Copy" com timeout curto
 		if exists(ctx, copyPublicLinkXPath, byXPath) {
-			_ = clickWithTimeout(ctx, copyPublicLinkXPath, byXPath, 3*time.Second)
+			_ = clickRobust(ctx, copyPublicLinkXPath, byXPath)
 		} else {
 			_ = deepClickButtonByText(ctx, "Copy public link")
-		}
-		// tenta clipboard
-		if clip := tryReadClipboard(ctx, 1500*time.Millisecond); looksLikeShareURL(clip) {
-			return clip
 		}
 		if delay > 0 {
 			_ = chromedp.Run(ctx, chromedp.Sleep(delay))
@@ -540,10 +479,8 @@ type selector struct {
 func clickRobust(ctx context.Context, sel string, by queryBy) error {
 	opts := queryOpts(by)
 
-	// ensure exists
 	var nodes []*cdp.Node
 	if err := chromedp.Run(ctx, chromedp.Nodes(sel, &nodes, opts...)); err != nil || len(nodes) == 0 {
-		// try deep strategy by text as last resort
 		if by == byXPath && strings.Contains(strings.ToLower(sel), "agree and continue") {
 			if deepClickButtonByText(ctx, "Agree and continue") {
 				return nil
@@ -552,7 +489,6 @@ func clickRobust(ctx context.Context, sel string, by queryBy) error {
 		return fmt.Errorf("not found: %s", sel)
 	}
 
-	// try normal click (WaitVisible é feito neste mesmo contexto, por isso SEMPRE envolvemos via clickWithTimeout)
 	if err := chromedp.Run(ctx,
 		chromedp.ScrollIntoView(sel, opts...),
 		chromedp.WaitVisible(sel, opts...),
@@ -562,13 +498,11 @@ func clickRobust(ctx context.Context, sel string, by queryBy) error {
 		return nil
 	}
 
-	// try mouse click on node
 	if err := chromedp.Run(ctx, chromedp.MouseClickNode(nodes[0])); err == nil {
 		log.Printf("   clicked(mouse): %s", shortSel(sel))
 		return nil
 	}
 
-	// try JS click
 	var js string
 	switch by {
 	case byCSS:
@@ -582,7 +516,6 @@ func clickRobust(ctx context.Context, sel string, by queryBy) error {
 		return nil
 	}
 
-	// try focus + Enter
 	_ = chromedp.Run(ctx, chromedp.Focus(sel, opts...), chromedp.SendKeys(sel, kb.Enter, opts...))
 	_ = chromedp.Run(ctx, chromedp.Sleep(120*time.Millisecond))
 
@@ -738,11 +671,9 @@ func fullHTML(ctx context.Context) (string, error) {
 	defer cancel()
 
 	var htmlStr string
-	// Tentativa 1: pegar o outerHTML inteiro
 	if err := chromedp.Run(c2, chromedp.Evaluate(`document.documentElement.outerHTML`, &htmlStr)); err == nil && strings.TrimSpace(htmlStr) != "" {
 		return htmlStr, nil
 	}
-	// Tentativa 2: fallback via OuterHTML("html")
 	htmlStr = ""
 	if err := chromedp.Run(c2, chromedp.OuterHTML("html", &htmlStr, chromedp.ByQuery)); err != nil {
 		return "", err
