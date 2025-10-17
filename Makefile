@@ -1,6 +1,6 @@
 .PHONY: build run test fmt lint
 
-BINARY := seidor-tools
+BINARY := aws-calculator-gen
 CMD_DIR := ./cmd/$(BINARY)
 ARGS ?=
 

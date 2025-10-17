@@ -1,4 +1,4 @@
-module github.com/example/seidor-tools
+module github.com/example/aws-calculator-gen
 
 go 1.24
 

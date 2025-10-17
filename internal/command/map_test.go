@@ -5,7 +5,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/example/seidor-tools/internal/calc"
+	"github.com/example/aws-calculator-gen/internal/calc"
 )
 
 func TestMapCommandName(t *testing.T) {

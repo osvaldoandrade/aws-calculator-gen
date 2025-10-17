@@ -1,15 +1,15 @@
-# seidor-tools
+# aws-calculator-gen
 
-`seidor-tools` is an interactive CLI utility for creating public AWS Pricing Calculator estimates for EC2 workloads.  The current implementation provides a single subcommand:
+`aws-calculator-gen` is an interactive CLI utility that automates the creation of public AWS Pricing Calculator estimates for EC2 workloads. The tool applies a greedy approach to assemble resources that meet a target Annual Recurring Revenue (ARR) so sales teams can quickly generate customer-facing calculators. The current implementation provides a single subcommand:
 
 ```
-seidor-tools map
+aws-calculator-gen map
 ```
 
 The command asks for basic opportunity information and attempts to create an estimate using browser automation.  Parameters may be supplied interactively or via the `--params` flag:
 
 ```
-seidor-tools map --params customer=Acme description="Test deal" region=us-east-1 arr=1200
+aws-calculator-gen map --params customer=Acme description="Test deal" region=us-east-1 arr=1200
 ```
 
 The project layout follows a simple command factory architecture and uses [pterm](https://github.com/pterm/pterm) for the text UI.
