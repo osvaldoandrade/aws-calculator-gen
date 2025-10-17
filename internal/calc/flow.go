@@ -76,7 +76,7 @@ const (
 func (o *Orchestrator) Run(ctx context.Context) (Result, error) {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
-	if fp, err := os.OpenFile("seidor-tools.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
+	if fp, err := os.OpenFile("aws-calculator-gen.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
 		log.SetOutput(fp)
 		defer func(fp *os.File) {
 			err := fp.Close()

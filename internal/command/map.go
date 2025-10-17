@@ -12,7 +12,7 @@ import (
 
 	"github.com/pterm/pterm"
 
-	"github.com/example/seidor-tools/internal/calc"
+	"github.com/example/aws-calculator-gen/internal/calc"
 )
 
 // MapCommand implements the "map" subcommand.
@@ -42,7 +42,7 @@ func (c *MapCommand) Name() string { return "map" }
 // Required parameters are: customer, description, region and arr (annual recurring revenue).
 // Parameters can be provided via --params or will be requested interactively.
 func (c *MapCommand) Run(ctx context.Context, params map[string]string) error {
-	pterm.DefaultSection.Println("Seidor Cloud")
+	pterm.DefaultSection.Println("AWS Calculator Generator")
 
 	customer, err := getStringParam(params, "customer", "Customer name")
 	if err != nil {
@@ -260,7 +260,7 @@ func (c *MapCommand) Run(ctx context.Context, params map[string]string) error {
 	}
 
 	data := map[string]any{
-		"tool":          "seidor-tools",
+		"tool":          "aws-calculator-gen",
 		"command":       "map",
 		"customer":      customer,
 		"description":   description,

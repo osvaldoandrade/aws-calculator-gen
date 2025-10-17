@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/example/seidor-tools/internal/command"
+	"github.com/example/aws-calculator-gen/internal/command"
 )
 
-const usage = `seidor-tools is a CLI utility.
+const usage = `aws-calculator-gen is a CLI utility.
 
 Usage:
-  seidor-tools <command> [--params key=value ...]
+  aws-calculator-gen <command> [--params key=value ...]
 
 Available commands:
   map    Create MAP estimate
@@ -27,7 +27,7 @@ func main() {
 	name := os.Args[1]
 	if len(os.Args) > 2 && (os.Args[2] == "--help" || os.Args[2] == "-h") {
 		if name == "map" {
-			fmt.Fprintln(os.Stdout, "Usage: seidor-tools map [--params key=value ...]")
+			fmt.Fprintln(os.Stdout, "Usage: aws-calculator-gen map [--params key=value ...]")
 			fmt.Fprintln(os.Stdout, "Creates an AWS Pricing Calculator estimate using MAP.")
 			return
 		}
