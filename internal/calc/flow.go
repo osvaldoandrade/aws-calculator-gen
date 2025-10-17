@@ -282,7 +282,7 @@ func clickViewSummary(ctx context.Context) error {
 		_ = chromedp.Run(ctx, chromedp.Sleep(500*time.Millisecond))
 		return nil
 	}
-	fallback := `//*[@id='estimate-button'] | //*[normalize-space()='View summary']/ancestor::*[self::button or self::a]`
+	fallback := `//*[@id='estimate-button'] | //*[normalize-space()='Save and view summary']/ancestor::*[self::button or self::a]`
 	if err := clickWithTimeout(ctx, fallback, byXPath, 5*time.Second); err != nil {
 		return err
 	}
