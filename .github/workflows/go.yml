@@ -75,9 +75,9 @@ jobs:
             git push origin "${TAG_NAME}"
           fi
 
-  # === macOS: assina .app, cria/assina DMG, notariza (com --wait) e staple com debug ===
+  # macOS: sign .app, create/sign DMG, notarize (--wait) and staple with debug
   release-macos:
-    name: macOS • DMG drag-to-Applications (Universal, signed + notarized)
+    name: macOS DMG (Universal, signed & notarized)
     runs-on: macos-latest
     needs: tag
     env:
@@ -85,7 +85,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Rust
+      - name: Set up Rust (macOS targets)
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
@@ -139,7 +139,7 @@ jobs:
           /usr/bin/osascript <<OSA
           do shell script "mkdir -p '${TARGET_DIR}' && install -m 0755 '${BIN_SRC}' '${TARGET_BIN}' && xattr -d com.apple.quarantine '${TARGET_BIN}' || true" with administrator privileges
           OSA
-          /usr/bin/osascript -e 'display dialog "__APP_DISPLAY__ instalado em ${TARGET_BIN}." buttons {"OK"} default button 1 with icon note'
+          /usr/bin/osascript -e 'display dialog "__APP_DISPLAY__ instalado em '"${TARGET_BIN}"'." buttons {"OK"} default button 1 with icon note'
           SH
           sed -i '' -e "s/__APP_NAME__/${APP_NAME}/g" -e "s/__APP_DISPLAY__/${APP_DISPLAY}/g" "$APP/Contents/MacOS/launcher"
           chmod +x "$APP/Contents/MacOS/launcher"
@@ -184,9 +184,9 @@ jobs:
           cp -R "$APP" dmgroot/
           DMG="dist/${APP_NAME}_${VERSION}_macOS.dmg"
           hdiutil create -volname "${VOL_NAME}" -srcfolder dmgroot -ov -format UDZO "$DMG"
-          echo "DMG_PATH=$DMG" >> $GITHUB_ENV
+          echo "DMG_PATH=$DMG" >> "$GITHUB_ENV"
 
-      - name: Codesign DMG (Developer ID) + metadata (pré-notary)
+      - name: Codesign DMG (Developer ID) + metadata (pre-notary)
         env:
           SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
         run: |
@@ -196,7 +196,6 @@ jobs:
           shasum -a 256 "$DMG_PATH" | tee dmg.sha256.pre
           codesign -dv --verbose=4 "$DMG_PATH" 2>&1 | tee codesign_dmg_pre.txt
 
-      # --- Notarização com credenciais em profile + --wait + logs/diagnóstico ---
       - name: Sanity check notary secrets
         shell: bash
         env:
@@ -241,15 +240,13 @@ jobs:
 
           PY=$(command -v python3 || command -v python)
           STATUS="$($PY - <<'PY'
-import json,sys
-d=json.load(open("notary.json"))
-print(d.get("status",""))
+import json
+print(json.load(open("notary.json")).get("status",""))
 PY
 )"
           ID="$($PY - <<'PY'
-import json,sys
-d=json.load(open("notary.json"))
-print(d.get("id",""))
+import json
+print(json.load(open("notary.json")).get("id",""))
 PY
 )"
           echo "Notary status: $STATUS"
@@ -258,24 +255,23 @@ PY
             echo "::error::Notarization not Accepted"; exit 1
           fi
 
-      - name: Fetch notary log (diagnóstico)
-        if: always()
+      - name: Fetch notary log (diagnostic)
+        if: ${{ always() }}
         run: |
           set -euo pipefail
           if [ -n "${NOTARY_ID:-}" ]; then
             xcrun notarytool log "$NOTARY_ID" --keychain-profile "ASC_PROFILE" | tee notary.log || true
           fi
 
-      - name: Verificar imutabilidade do DMG (pré vs pós-notary)
+      - name: Verify DMG immutability (pre vs post notary)
         run: |
           set -euo pipefail
           shasum -a 256 "$DMG_PATH" | tee dmg.sha256.post
           diff -u dmg.sha256.pre dmg.sha256.post
 
-      - name: Staple ticket (retry/backoff) + validações
+      - name: Staple ticket (retry/backoff) + validations
         run: |
           set -euo pipefail
-          # retry/backoff para propagação do ticket no CloudKit
           for i in 1 2 3 4 5 6 7 8 9 10; do
             if xcrun stapler staple -v "$DMG_PATH"; then
               break
@@ -288,8 +284,8 @@ PY
           codesign --verify --strict --verbose=2 "$DMG_PATH" || true
           codesign -dv --verbose=4 "$DMG_PATH" 2>&1 | tee codesign_dmg_post.txt
 
-      - name: Fallback: staple no .app dentro do DMG (se falhar)
-        if: failure()
+      - name: Fallback: staple .app inside DMG (if stapler failed)
+        if: ${{ failure() }}
         run: |
           set -euo pipefail
           MNT="$(mktemp -d)"
@@ -301,15 +297,15 @@ PY
           fi
           hdiutil detach "$MNT"
 
-      - name: Checksums + Upload release asset
+      - name: Checksums + Upload release asset (DMG)
         run: |
           set -euo pipefail
           shasum -a 256 "$DMG_PATH" > "${DMG_PATH}.sha256"
           cat "${DMG_PATH}.sha256"
 
       - name: Upload debug artifacts
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: macos-notary-artifacts-${{ needs.tag.outputs.TAG_NAME }}
           path: |
@@ -332,7 +328,7 @@ PY
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release-linux-rpm:
-    name: Linux • RPM (x86_64 & aarch64)
+    name: Linux RPM (x86_64 & aarch64)
     runs-on: ubuntu-latest
     needs: tag
     env:
@@ -383,7 +379,7 @@ PY
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release-linux-deb:
-    name: Linux • DEB (amd64 & arm64)
+    name: Linux DEB (amd64 & arm64)
     runs-on: ubuntu-latest
     needs: tag
     env:
