@@ -1,8 +1,8 @@
-name: CI, Tag & Release (macOS DMG drag, Linux RPM/DEB incl. Raspberry Pi)
+name: CI, Tag & Release - itransform-cli
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch: {}
 
 permissions:
@@ -13,11 +13,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  APP_NAME: aws-calculator-gen
-  APP_DISPLAY: "AWS Calculator Generator"
-  BUNDLE_ID: br.com.codecompany
-  VOL_NAME: "AWS Calculator Generator"
-  MAIN_PKG: ./cmd/aws-calculator-gen
+  APP_NAME: itransform-cli
+  BIN_NAME: itransform-cli
+  APP_DISPLAY: "iTransform CLI"
+  BUNDLE_ID: com.itransform.cli
+  VOL_NAME: "iTransform CLI"
 
 jobs:
   build-test:
@@ -25,16 +25,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure pricing.yaml exists
-        run: |
-          test -f pricing.yaml || { echo "pricing.yaml não encontrado na raiz do repo"; exit 1; }
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with: { go-version: '1.22', cache: true }
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
       - name: Build
-        run: go build -v ./...
+        run: cargo build --release --verbose
       - name: Test
-        run: go test -v ./...
+        run: cargo test --verbose
 
   tag:
     name: Compute & Push Tag
@@ -45,16 +41,22 @@ jobs:
       VERSION: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
       - id: version
         name: Compute next tag (patch bump)
         shell: bash
         run: |
+          set -euo pipefail
           git fetch --tags
           LATEST_TAG="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
-          if [ -z "$LATEST_TAG" ]; then NEXT_TAG="v0.1.0"; else
-            V="${LATEST_TAG#v}"; IFS='.' read -r MA MI PA <<< "$V"
-            : "${MA:=0}"; : "${MI:=1}"; : "${PA:=0}"; PA=$((PA+1))
+          if [ -z "$LATEST_TAG" ]; then
+            NEXT_TAG="v0.1.0"
+          else
+            V="${LATEST_TAG#v}"
+            IFS='.' read -r MA MI PA <<< "$V"
+            : "${MA:=0}"; : "${MI:=1}"; : "${PA:=0}"
+            PA=$((PA+1))
             NEXT_TAG="v${MA}.${MI}.${PA}"
           fi
           echo "tag=${NEXT_TAG}"       >> "$GITHUB_OUTPUT"
@@ -62,6 +64,7 @@ jobs:
       - name: Create and push git tag
         shell: bash
         run: |
+          set -euo pipefail
           TAG_NAME="${{ steps.version.outputs.tag }}"
           if git ls-remote --tags origin | grep -q "refs/tags/${TAG_NAME}$"; then
             echo "Tag ${TAG_NAME} já existe; seguindo."
@@ -72,50 +75,47 @@ jobs:
             git push origin "${TAG_NAME}"
           fi
 
+  # === macOS: assina .app, cria/assina DMG, notariza (com --wait) e staple com debug ===
   release-macos:
-    name: macOS • DMG drag-to-Applications (Universal, ad-hoc signed, /usr/local/bin)
+    name: macOS • DMG drag-to-Applications (Universal, signed + notarized)
     runs-on: macos-latest
     needs: tag
     env:
       VERSION: ${{ needs.tag.outputs.VERSION }}
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure pricing.yaml exists
-        run: |
-          test -f pricing.yaml || { echo "pricing.yaml não encontrado na raiz do repo"; exit 1; }
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with: { go-version: '1.22', cache: true }
 
-      # Build universal (arm64 + amd64)
-      - name: Build darwin/amd64
-        env: { GOOS: darwin, GOARCH: amd64, CGO_ENABLED: 0 }
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - name: Build macOS x86_64
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Build macOS arm64
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Create universal binary
         run: |
+          set -euo pipefail
           mkdir -p dist
-          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/${APP_NAME}_amd64 ${MAIN_PKG}
-      - name: Build darwin/arm64
-        env: { GOOS: darwin, GOARCH: arm64, CGO_ENABLED: 0 }
-        run: |
-          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/${APP_NAME}_arm64 ${MAIN_PKG}
-      - name: Create universal binary (lipo)
-        run: |
-          lipo -create -output dist/${APP_NAME} dist/${APP_NAME}_amd64 dist/${APP_NAME}_arm64
-          chmod +x dist/${APP_NAME}
-          file dist/${APP_NAME}
+          lipo -create \
+            target/x86_64-apple-darwin/release/${BIN_NAME} \
+            target/aarch64-apple-darwin/release/${BIN_NAME} \
+            -output dist/${BIN_NAME}
+          chmod +x dist/${BIN_NAME}
 
-      # Build proper .app bundle (launcher + Info.plist + icon + pricing.yaml + wrapper)
-      - name: Create .app bundle (installs libexec + share + wrapper)
+      - name: Create .app bundle
         shell: bash
         run: |
+          set -euo pipefail
           APP="${APP_DISPLAY}.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-
-          # Info.plist
           cat > "$APP/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
+          <plist version="1.0"><dict>
             <key>CFBundleDevelopmentRegion</key><string>en</string>
             <key>CFBundleDisplayName</key><string>${APP_DISPLAY}</string>
             <key>CFBundleExecutable</key><string>launcher</string>
@@ -127,80 +127,199 @@ jobs:
             <key>CFBundleVersion</key><string>${VERSION}</string>
             <key>LSMinimumSystemVersion</key><string>11.0</string>
             <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
-            <key>CFBundleIconFile</key><string>AppIcon.icns</string>
-          </dict>
-          </plist>
+          </dict></plist>
           PLIST
 
-          # Launcher template (no expand) + replace placeholders safely
           cat > "$APP/Contents/MacOS/launcher" <<'SH'
           #!/bin/bash
           set -euo pipefail
-          BIN_SRC="$(dirname "$0")/../Resources/__APP_BIN__"
-          PRICING_SRC="$(dirname "$0")/../Resources/pricing.yaml"
-          WRAP_SRC="$(dirname "$0")/../Resources/wrapper.sh"
-
-          TARGET_BIN_DIR="/usr/local/libexec/__APP_NAME__"
-          TARGET_SHARE_DIR="/usr/local/share/__APP_NAME__"
-          TARGET_LINK="/usr/local/bin/__APP_NAME__"
-
+          BIN_SRC="$(dirname "$0")/../Resources/__APP_NAME__"
+          TARGET_DIR="/usr/local/bin"
+          TARGET_BIN="${TARGET_DIR}/__APP_NAME__"
           /usr/bin/osascript <<OSA
-          do shell script "mkdir -p '${TARGET_BIN_DIR}' '${TARGET_SHARE_DIR}' && \
-          install -m 0755 '${BIN_SRC}' '${TARGET_BIN_DIR}/__APP_NAME__' && \
-          install -m 0644 '${PRICING_SRC}' '${TARGET_SHARE_DIR}/pricing.yaml' && \
-          install -m 0755 '${WRAP_SRC}' '${TARGET_LINK}' && \
-          xattr -d com.apple.quarantine '${TARGET_BIN_DIR}/__APP_NAME__' || true && \
-          xattr -d com.apple.quarantine '${TARGET_LINK}' || true" with administrator privileges
+          do shell script "mkdir -p '${TARGET_DIR}' && install -m 0755 '${BIN_SRC}' '${TARGET_BIN}' && xattr -d com.apple.quarantine '${TARGET_BIN}' || true" with administrator privileges
           OSA
-
-          /usr/bin/osascript -e 'display dialog "__APP_DISPLAY__ instalado. Binário em /usr/local/libexec/__APP_NAME__, wrapper em /usr/local/bin/__APP_NAME__ e pricing.yaml em /usr/local/share/__APP_NAME__." buttons {"OK"} default button 1 with icon note'
+          /usr/bin/osascript -e 'display dialog "__APP_DISPLAY__ instalado em ${TARGET_BIN}." buttons {"OK"} default button 1 with icon note'
           SH
-          sed -i '' -e "s/__APP_NAME__/${APP_NAME}/g" -e "s/__APP_BIN__/${APP_NAME}/g" -e "s/__APP_DISPLAY__/${APP_DISPLAY}/g" "$APP/Contents/MacOS/launcher"
+          sed -i '' -e "s/__APP_NAME__/${APP_NAME}/g" -e "s/__APP_DISPLAY__/${APP_DISPLAY}/g" "$APP/Contents/MacOS/launcher"
           chmod +x "$APP/Contents/MacOS/launcher"
-
-          # Binário universal embutido
           cp dist/${APP_NAME} "$APP/Contents/Resources/${APP_NAME}"
 
-          # pricing.yaml embutido
-          cp pricing.yaml "$APP/Contents/Resources/pricing.yaml"
-
-          # Wrapper embutido (executa o binário real com variável EC2_PRICING_YAML)
-          cat > "$APP/Contents/Resources/wrapper.sh" <<'WRAP'
-          #!/bin/bash
-          set -euo pipefail
-          export EC2_PRICING_YAML="/usr/local/share/__APP_NAME__/pricing.yaml"
-          exec /usr/local/libexec/__APP_NAME__/__APP_NAME__ "$@"
-          WRAP
-          sed -i '' -e "s/__APP_NAME__/${APP_NAME}/g" "$APP/Contents/Resources/wrapper.sh"
-          chmod +x "$APP/Contents/Resources/wrapper.sh"
-
-          # Ícone (a partir de assets/icon.png)
-          if [ -f assets/icon.png ]; then
-            mkdir -p icon.iconset
-            for s in 16 32 64 128 256 512 1024; do /usr/bin/sips -z $s $s assets/icon.png --out icon.iconset/icon_${s}x${s}.png >/dev/null; done
-            /usr/bin/iconutil -c icns icon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
-          fi
-
-      - name: Ad-hoc codesign .app
+      - name: Import Developer ID cert
+        shell: bash
+        env:
+          P12_B64: ${{ secrets.APPLE_DEV_ID_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.APPLE_DEV_ID_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
         run: |
+          set -euo pipefail
+          if [ -z "${P12_B64:-}" ]; then
+            echo "::error::Secret APPLE_DEV_ID_P12_BASE64 ausente"; exit 1; fi
+          printf '%s' "$P12_B64" | base64 --decode > /tmp/dev_id.p12 2>/dev/null || \
+          printf '%s' "$P12_B64" | base64 -d        > /tmp/dev_id.p12 2>/dev/null || \
+          printf '%s' "$P12_B64" | /usr/bin/base64 -D > /tmp/dev_id.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import /tmp/dev_id.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security list-keychains -d user -s build.keychain login.keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security find-identity -v -p codesigning build.keychain || true
+
+      - name: Codesign .app (Developer ID + Hardened Runtime)
+        env:
+          SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
           APP="${APP_DISPLAY}.app"
-          codesign --force --deep -s - --timestamp=none "$APP" || true
-          codesign -dv "$APP" || true
+          codesign --force --deep --options runtime --timestamp \
+                   --sign "$SIGNING_IDENTITY" "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
 
       - name: Create DMG (drag-to-Applications)
         run: |
+          set -euo pipefail
           APP="${APP_DISPLAY}.app"
           mkdir -p dmgroot
           cp -R "$APP" dmgroot/
-          ln -s /Applications dmgroot/Applications
           DMG="dist/${APP_NAME}_${VERSION}_macOS.dmg"
           hdiutil create -volname "${VOL_NAME}" -srcfolder dmgroot -ov -format UDZO "$DMG"
           echo "DMG_PATH=$DMG" >> $GITHUB_ENV
 
-      - name: Checksums + Upload
+      - name: Codesign DMG (Developer ID) + metadata (pré-notary)
+        env:
+          SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
         run: |
+          set -euo pipefail
+          codesign --force --timestamp --sign "$SIGNING_IDENTITY" "$DMG_PATH"
+          codesign --verify --strict --verbose=2 "$DMG_PATH"
+          shasum -a 256 "$DMG_PATH" | tee dmg.sha256.pre
+          codesign -dv --verbose=4 "$DMG_PATH" 2>&1 | tee codesign_dmg_pre.txt
+
+      # --- Notarização com credenciais em profile + --wait + logs/diagnóstico ---
+      - name: Sanity check notary secrets
+        shell: bash
+        env:
+          A: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
+          B: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          C: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          D: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for k in A B C D; do
+            v="${!k}"; if [ -z "$v" ]; then
+              echo "::error::Missing notary secret: $k"; exit 1; fi
+          done
+
+      - name: Store notary credentials (validate)
+        env:
+          NOTARY_KEY_B64: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          KEY_PATH="/tmp/AuthKey_${NOTARY_KEY_ID}.p8"
+          printf '%s' "$NOTARY_KEY_B64" | base64 --decode > "$KEY_PATH" 2>/dev/null || \
+          printf '%s' "$NOTARY_KEY_B64" | base64 -d        > "$KEY_PATH" 2>/dev/null || \
+          printf '%s' "$NOTARY_KEY_B64" | /usr/bin/base64 -D > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          head -n1 "$KEY_PATH" | grep -q "BEGIN PRIVATE KEY" || { echo "::error::.p8 inválido"; exit 1; }
+          xcrun notarytool store-credentials "ASC_PROFILE" \
+            --key "$KEY_PATH" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
+            --validate
+
+      - id: notary
+        name: Notarize DMG (submit --wait + JSON)
+        run: |
+          set -euo pipefail
+          xcrun notarytool submit "$DMG_PATH" \
+            --keychain-profile "ASC_PROFILE" \
+            --wait \
+            --output-format json | tee notary.json
+
+          PY=$(command -v python3 || command -v python)
+          STATUS="$($PY - <<'PY'
+import json,sys
+d=json.load(open("notary.json"))
+print(d.get("status",""))
+PY
+)"
+          ID="$($PY - <<'PY'
+import json,sys
+d=json.load(open("notary.json"))
+print(d.get("id",""))
+PY
+)"
+          echo "Notary status: $STATUS"
+          echo "NOTARY_ID=$ID" >> $GITHUB_ENV
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::error::Notarization not Accepted"; exit 1
+          fi
+
+      - name: Fetch notary log (diagnóstico)
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -n "${NOTARY_ID:-}" ]; then
+            xcrun notarytool log "$NOTARY_ID" --keychain-profile "ASC_PROFILE" | tee notary.log || true
+          fi
+
+      - name: Verificar imutabilidade do DMG (pré vs pós-notary)
+        run: |
+          set -euo pipefail
+          shasum -a 256 "$DMG_PATH" | tee dmg.sha256.post
+          diff -u dmg.sha256.pre dmg.sha256.post
+
+      - name: Staple ticket (retry/backoff) + validações
+        run: |
+          set -euo pipefail
+          # retry/backoff para propagação do ticket no CloudKit
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if xcrun stapler staple -v "$DMG_PATH"; then
+              break
+            fi
+            echo "stapler: ticket ainda não disponível (tentativa $i). Aguardando..."
+            sleep 30
+          done
+          xcrun stapler validate "$DMG_PATH" || true
+          spctl --assess --type open -vvv "$DMG_PATH" || true
+          codesign --verify --strict --verbose=2 "$DMG_PATH" || true
+          codesign -dv --verbose=4 "$DMG_PATH" 2>&1 | tee codesign_dmg_post.txt
+
+      - name: Fallback: staple no .app dentro do DMG (se falhar)
+        if: failure()
+        run: |
+          set -euo pipefail
+          MNT="$(mktemp -d)"
+          hdiutil attach -nobrowse -mountpoint "$MNT" "$DMG_PATH"
+          APP_PATH="$(/usr/bin/find "$MNT" -maxdepth 2 -name '*.app' -print -quit)"
+          if [ -n "$APP_PATH" ]; then
+            xcrun stapler staple -v "$APP_PATH" || true
+            xcrun stapler validate "$APP_PATH" || true
+          fi
+          hdiutil detach "$MNT"
+
+      - name: Checksums + Upload release asset
+        run: |
+          set -euo pipefail
           shasum -a 256 "$DMG_PATH" > "${DMG_PATH}.sha256"
           cat "${DMG_PATH}.sha256"
+
+      - name: Upload debug artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-notary-artifacts-${{ needs.tag.outputs.TAG_NAME }}
+          path: |
+            notary.json
+            notary.log
+            dmg.sha256.pre
+            dmg.sha256.post
+            codesign_dmg_pre.txt
+            codesign_dmg_post.txt
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.tag.outputs.TAG_NAME }}
@@ -220,78 +339,35 @@ jobs:
       VERSION: ${{ needs.tag.outputs.VERSION }}
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure pricing.yaml exists
-        run: |
-          test -f pricing.yaml || { echo "pricing.yaml não encontrado na raiz do repo"; exit 1; }
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with: { go-version: '1.22', cache: true }
-
-      - name: Build linux/amd64
-        env: { GOOS: linux, GOARCH: amd64, CGO_ENABLED: 0 }
-        run: |
-          mkdir -p dist
-          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/${APP_NAME}_linux_amd64 ${MAIN_PKG}
-
-          # Estrutura do pacote (amd64)
-          mkdir -p pkg/linux/amd64/usr/local/libexec/${APP_NAME}
-          mkdir -p pkg/linux/amd64/usr/local/share/${APP_NAME}
-          mkdir -p pkg/linux/amd64/usr/local/bin
-
-          cp dist/${APP_NAME}_linux_amd64 pkg/linux/amd64/usr/local/libexec/${APP_NAME}/${APP_NAME}
-          cp pricing.yaml pkg/linux/amd64/usr/local/share/${APP_NAME}/pricing.yaml
-
-          cat > pkg/linux/amd64/usr/local/bin/${APP_NAME} <<'SH'
-          #!/bin/bash
-          set -euo pipefail
-          export EC2_PRICING_YAML="/usr/local/share/__APP_NAME__/pricing.yaml"
-          exec /usr/local/libexec/__APP_NAME__/__APP_NAME__ "$@"
-          SH
-          sed -i -e "s/__APP_NAME__/${APP_NAME}/g" pkg/linux/amd64/usr/local/bin/${APP_NAME}
-          chmod 0755 pkg/linux/amd64/usr/local/bin/${APP_NAME}
-
-      - name: Build linux/arm64
-        env: { GOOS: linux, GOARCH: arm64, CGO_ENABLED: 0 }
-        run: |
-          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/${APP_NAME}_linux_arm64 ${MAIN_PKG}
-
-          # Estrutura do pacote (arm64)
-          mkdir -p pkg/linux/arm64/usr/local/libexec/${APP_NAME}
-          mkdir -p pkg/linux/arm64/usr/local/share/${APP_NAME}
-          mkdir -p pkg/linux/arm64/usr/local/bin
-
-          cp dist/${APP_NAME}_linux_arm64 pkg/linux/arm64/usr/local/libexec/${APP_NAME}/${APP_NAME}
-          cp pricing.yaml pkg/linux/arm64/usr/local/share/${APP_NAME}/pricing.yaml
-
-          cat > pkg/linux/arm64/usr/local/bin/${APP_NAME} <<'SH'
-          #!/bin/bash
-          set -euo pipefail
-          export EC2_PRICING_YAML="/usr/local/share/__APP_NAME__/pricing.yaml"
-          exec /usr/local/libexec/__APP_NAME__/__APP_NAME__ "$@"
-          SH
-          sed -i -e "s/__APP_NAME__/${APP_NAME}/g" pkg/linux/arm64/usr/local/bin/${APP_NAME}
-          chmod 0755 pkg/linux/arm64/usr/local/bin/${APP_NAME}
-
-      - name: Install fpm
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - name: Install cross toolchain and fpm deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y ruby ruby-dev rubygems rpm
+          sudo apt-get install -y gcc-aarch64-linux-gnu ruby ruby-dev rubygems rpm
           sudo gem install --no-document fpm
-
-      - name: Package RPMs & Upload
+      - name: Build linux x86_64
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+      - name: Build linux aarch64
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --target aarch64-unknown-linux-gnu
+      - name: Package RPMs
         run: |
-          # amd64
+          set -euo pipefail
+          mkdir -p dist pkg/linux/amd64/usr/local/bin pkg/linux/aarch64/usr/local/bin
+          install -m 0755 target/x86_64-unknown-linux-gnu/release/${BIN_NAME} pkg/linux/amd64/usr/local/bin/${APP_NAME}
+          install -m 0755 target/aarch64-unknown-linux-gnu/release/${BIN_NAME} pkg/linux/aarch64/usr/local/bin/${APP_NAME}
           fpm -s dir -t rpm -n ${APP_NAME} -v ${VERSION} -a x86_64 --license MIT \
             --description "${APP_DISPLAY}" --vendor "${{ github.repository_owner }}" \
             --url "https://github.com/${{ github.repository }}" \
-            -C pkg/linux/amd64 usr/local/bin usr/local/libexec usr/local/share
-
-          # arm64
+            -C pkg/linux/amd64 usr/local/bin
           fpm -s dir -t rpm -n ${APP_NAME} -v ${VERSION} -a aarch64 --license MIT \
             --description "${APP_DISPLAY}" --vendor "${{ github.repository_owner }}" \
             --url "https://github.com/${{ github.repository }}" \
-            -C pkg/linux/arm64 usr/local/bin usr/local/libexec usr/local/share
-
+            -C pkg/linux/aarch64 usr/local/bin
           mv ${APP_NAME}-${VERSION}-1.x86_64.rpm dist/${APP_NAME}_${VERSION}_linux_x86_64.rpm
           mv ${APP_NAME}-${VERSION}-1.aarch64.rpm dist/${APP_NAME}_${VERSION}_linux_aarch64.rpm
           (cd dist && shasum -a 256 *.rpm > SHA256SUMS.rpm.txt)
@@ -307,101 +383,44 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release-linux-deb:
-    name: Linux • DEB (amd64, arm64 & armhf / Raspberry Pi)
+    name: Linux • DEB (amd64 & arm64)
     runs-on: ubuntu-latest
     needs: tag
     env:
       VERSION: ${{ needs.tag.outputs.VERSION }}
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure pricing.yaml exists
-        run: |
-          test -f pricing.yaml || { echo "pricing.yaml não encontrado na raiz do repo"; exit 1; }
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with: { go-version: '1.22', cache: true }
-
-      # amd64
-      - name: Build linux/amd64
-        env: { GOOS: linux, GOARCH: amd64, CGO_ENABLED: 0 }
-        run: |
-          mkdir -p dist
-          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/${APP_NAME}_linux_amd64 ${MAIN_PKG}
-          mkdir -p pkg/deb/amd64/usr/local/libexec/${APP_NAME} pkg/deb/amd64/usr/local/share/${APP_NAME} pkg/deb/amd64/usr/local/bin
-          cp dist/${APP_NAME}_linux_amd64 pkg/deb/amd64/usr/local/libexec/${APP_NAME}/${APP_NAME}
-          cp pricing.yaml pkg/deb/amd64/usr/local/share/${APP_NAME}/pricing.yaml
-          cat > pkg/deb/amd64/usr/local/bin/${APP_NAME} <<'SH'
-          #!/bin/bash
-          set -euo pipefail
-          export EC2_PRICING_YAML="/usr/local/share/__APP_NAME__/pricing.yaml"
-          exec /usr/local/libexec/__APP_NAME__/__APP_NAME__ "$@"
-          SH
-          sed -i -e "s/__APP_NAME__/${APP_NAME}/g" pkg/deb/amd64/usr/local/bin/${APP_NAME}
-          chmod 0755 pkg/deb/amd64/usr/local/bin/${APP_NAME}
-
-      # arm64
-      - name: Build linux/arm64
-        env: { GOOS: linux, GOARCH: arm64, CGO_ENABLED: 0 }
-        run: |
-          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/${APP_NAME}_linux_arm64 ${MAIN_PKG}
-          mkdir -p pkg/deb/arm64/usr/local/libexec/${APP_NAME} pkg/deb/arm64/usr/local/share/${APP_NAME} pkg/deb/arm64/usr/local/bin
-          cp dist/${APP_NAME}_linux_arm64 pkg/deb/arm64/usr/local/libexec/${APP_NAME}/${APP_NAME}
-          cp pricing.yaml pkg/deb/arm64/usr/local/share/${APP_NAME}/pricing.yaml
-          cat > pkg/deb/arm64/usr/local/bin/${APP_NAME} <<'SH'
-          #!/bin/bash
-          set -euo pipefail
-          export EC2_PRICING_YAML="/usr/local/share/__APP_NAME__/pricing.yaml"
-          exec /usr/local/libexec/__APP_NAME__/__APP_NAME__ "$@"
-          SH
-          sed -i -e "s/__APP_NAME__/${APP_NAME}/g" pkg/deb/arm64/usr/local/bin/${APP_NAME}
-          chmod 0755 pkg/deb/arm64/usr/local/bin/${APP_NAME}
-
-      # armhf (Raspberry Pi OS 32-bit)
-      - name: Build linux/armv7 (armhf)
-        env: { GOOS: linux, GOARCH: arm, GOARM: 7, CGO_ENABLED: 0 }
-        run: |
-          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o dist/${APP_NAME}_linux_armv7 ${MAIN_PKG}
-          mkdir -p pkg/deb/armhf/usr/local/libexec/${APP_NAME} pkg/deb/armhf/usr/local/share/${APP_NAME} pkg/deb/armhf/usr/local/bin
-          cp dist/${APP_NAME}_linux_armv7 pkg/deb/armhf/usr/local/libexec/${APP_NAME}/${APP_NAME}
-          cp pricing.yaml pkg/deb/armhf/usr/local/share/${APP_NAME}/pricing.yaml
-          cat > pkg/deb/armhf/usr/local/bin/${APP_NAME} <<'SH'
-          #!/bin/bash
-          set -euo pipefail
-          export EC2_PRICING_YAML="/usr/local/share/__APP_NAME__/pricing.yaml"
-          exec /usr/local/libexec/__APP_NAME__/__APP_NAME__ "$@"
-          SH
-          sed -i -e "s/__APP_NAME__/${APP_NAME}/g" pkg/deb/armhf/usr/local/bin/${APP_NAME}
-          chmod 0755 pkg/deb/armhf/usr/local/bin/${APP_NAME}
-
-      - name: Install fpm
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - name: Install cross toolchain and fpm deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y ruby ruby-dev rubygems build-essential
+          sudo apt-get install -y gcc-aarch64-linux-gnu ruby ruby-dev rubygems build-essential
           sudo gem install --no-document fpm
-
-      - name: Package DEBs & Upload
+      - name: Build linux x86_64
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+      - name: Build linux aarch64
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --target aarch64-unknown-linux-gnu
+      - name: Package DEBs
         run: |
-          # amd64
+          set -euo pipefail
+          mkdir -p dist pkg/deb/amd64/usr/local/bin pkg/deb/arm64/usr/local/bin
+          install -m 0755 target/x86_64-unknown-linux-gnu/release/${BIN_NAME} pkg/deb/amd64/usr/local/bin/${APP_NAME}
+          install -m 0755 target/aarch64-unknown-linux-gnu/release/${BIN_NAME} pkg/deb/arm64/usr/local/bin/${APP_NAME}
           fpm -s dir -t deb -n ${APP_NAME} -v ${VERSION} -a amd64 --license MIT \
             --description "${APP_DISPLAY}" --vendor "${{ github.repository_owner }}" \
             --url "https://github.com/${{ github.repository }}" \
-            -C pkg/deb/amd64 usr/local/bin usr/local/libexec usr/local/share
-
-          # arm64
+            -C pkg/deb/amd64 usr/local/bin
           fpm -s dir -t deb -n ${APP_NAME} -v ${VERSION} -a arm64 --license MIT \
             --description "${APP_DISPLAY}" --vendor "${{ github.repository_owner }}" \
             --url "https://github.com/${{ github.repository }}" \
-            -C pkg/deb/arm64 usr/local/bin usr/local/libexec usr/local/share
-
-          # armhf (Raspberry Pi 32-bit)
-          fpm -s dir -t deb -n ${APP_NAME} -v ${VERSION} -a armhf --license MIT \
-            --description "${APP_DISPLAY}" --vendor "${{ github.repository_owner }}" \
-            --url "https://github.com/${{ github.repository }}" \
-            -C pkg/deb/armhf usr/local/bin usr/local/libexec usr/local/share
-
-          mv ${APP_NAME}_${VERSION}_amd64.deb      dist/${APP_NAME}_${VERSION}_linux_amd64.deb
-          mv ${APP_NAME}_${VERSION}_arm64.deb      dist/${APP_NAME}_${VERSION}_linux_arm64.deb
-          mv ${APP_NAME}_${VERSION}_armhf.deb      dist/${APP_NAME}_${VERSION}_linux_armhf.deb
+            -C pkg/deb/arm64 usr/local/bin
+          mv ${APP_NAME}_${VERSION}_amd64.deb dist/${APP_NAME}_${VERSION}_linux_amd64.deb
+          mv ${APP_NAME}_${VERSION}_arm64.deb dist/${APP_NAME}_${VERSION}_linux_arm64.deb
           (cd dist && shasum -a 256 *.deb > SHA256SUMS.deb.txt)
       - uses: softprops/action-gh-release@v2
         with:
@@ -410,7 +429,6 @@ jobs:
           files: |
             dist/${{ env.APP_NAME }}_${{ env.VERSION }}_linux_amd64.deb
             dist/${{ env.APP_NAME }}_${{ env.VERSION }}_linux_arm64.deb
-            dist/${{ env.APP_NAME }}_${{ env.VERSION }}_linux_armhf.deb
             dist/SHA256SUMS.deb.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
