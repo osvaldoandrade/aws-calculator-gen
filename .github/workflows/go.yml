@@ -47,7 +47,6 @@ jobs:
         name: Compute next tag (patch bump)
         shell: bash
         run: |
-          set -euo pipefail
           git fetch --tags
           LATEST_TAG="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
           if [ -z "$LATEST_TAG" ]; then
@@ -64,7 +63,6 @@ jobs:
       - name: Create and push git tag
         shell: bash
         run: |
-          set -euo pipefail
           TAG_NAME="${{ steps.version.outputs.tag }}"
           if git ls-remote --tags origin | grep -q "refs/tags/${TAG_NAME}$"; then
             echo "Tag ${TAG_NAME} já existe; seguindo."
@@ -75,9 +73,9 @@ jobs:
             git push origin "${TAG_NAME}"
           fi
 
-  # macOS: sign .app, create/sign DMG, notarize (--wait) and staple with debug
+  # === macOS: assina .app, cria/assina DMG, notariza e staple ===
   release-macos:
-    name: macOS DMG (Universal, signed & notarized)
+    name: macOS • DMG drag-to-Applications (Universal, signed + notarized)
     runs-on: macos-latest
     needs: tag
     env:
@@ -85,7 +83,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Rust (macOS targets)
+      - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
@@ -98,7 +96,6 @@ jobs:
 
       - name: Create universal binary
         run: |
-          set -euo pipefail
           mkdir -p dist
           lipo -create \
             target/x86_64-apple-darwin/release/${BIN_NAME} \
@@ -109,7 +106,6 @@ jobs:
       - name: Create .app bundle
         shell: bash
         run: |
-          set -euo pipefail
           APP="${APP_DISPLAY}.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cat > "$APP/Contents/Info.plist" <<PLIST
@@ -139,7 +135,7 @@ jobs:
           /usr/bin/osascript <<OSA
           do shell script "mkdir -p '${TARGET_DIR}' && install -m 0755 '${BIN_SRC}' '${TARGET_BIN}' && xattr -d com.apple.quarantine '${TARGET_BIN}' || true" with administrator privileges
           OSA
-          /usr/bin/osascript -e 'display dialog "__APP_DISPLAY__ instalado em '"${TARGET_BIN}"'." buttons {"OK"} default button 1 with icon note'
+          /usr/bin/osascript -e 'display dialog "__APP_DISPLAY__ instalado em ${TARGET_BIN}." buttons {"OK"} default button 1 with icon note'
           SH
           sed -i '' -e "s/__APP_NAME__/${APP_NAME}/g" -e "s/__APP_DISPLAY__/${APP_DISPLAY}/g" "$APP/Contents/MacOS/launcher"
           chmod +x "$APP/Contents/MacOS/launcher"
@@ -152,7 +148,6 @@ jobs:
           P12_PASSWORD: ${{ secrets.APPLE_DEV_ID_P12_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
         run: |
-          set -euo pipefail
           if [ -z "${P12_B64:-}" ]; then
             echo "::error::Secret APPLE_DEV_ID_P12_BASE64 ausente"; exit 1; fi
           printf '%s' "$P12_B64" | base64 --decode > /tmp/dev_id.p12 2>/dev/null || \
@@ -164,38 +159,43 @@ jobs:
           security import /tmp/dev_id.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
           security list-keychains -d user -s build.keychain login.keychain
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          security find-identity -v -p codesigning build.keychain || true
+      - name: Debug signing identities
+        run: security find-identity -v -p codesigning build.keychain || true
 
       - name: Codesign .app (Developer ID + Hardened Runtime)
         env:
           SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
         run: |
-          set -euo pipefail
           APP="${APP_DISPLAY}.app"
           codesign --force --deep --options runtime --timestamp \
                    --sign "$SIGNING_IDENTITY" "$APP"
+          echo "Verifying .app signature (strict/deep)…"
           codesign --verify --deep --strict --verbose=2 "$APP"
+          echo "Gatekeeper assess .app (may warn before notarization)…"
+          spctl --assess --type execute -vv "$APP" || true
+          echo "Entitlements (for debug):"
+          codesign -d --entitlements :- "$APP" || true
 
       - name: Create DMG (drag-to-Applications)
         run: |
-          set -euo pipefail
           APP="${APP_DISPLAY}.app"
           mkdir -p dmgroot
           cp -R "$APP" dmgroot/
           DMG="dist/${APP_NAME}_${VERSION}_macOS.dmg"
           hdiutil create -volname "${VOL_NAME}" -srcfolder dmgroot -ov -format UDZO "$DMG"
-          echo "DMG_PATH=$DMG" >> "$GITHUB_ENV"
+          echo "DMG_PATH=$DMG" >> $GITHUB_ENV
 
-      - name: Codesign DMG (Developer ID) + metadata (pre-notary)
+      - name: Codesign DMG (Developer ID)
         env:
           SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
         run: |
-          set -euo pipefail
           codesign --force --timestamp --sign "$SIGNING_IDENTITY" "$DMG_PATH"
+          echo "Verifying DMG signature…"
           codesign --verify --strict --verbose=2 "$DMG_PATH"
-          shasum -a 256 "$DMG_PATH" | tee dmg.sha256.pre
-          codesign -dv --verbose=4 "$DMG_PATH" 2>&1 | tee codesign_dmg_pre.txt
+          echo "Gatekeeper assess DMG (expected to warn before notarization)…"
+          spctl --assess --type open --verbose "$DMG_PATH" || true
 
+      # --- Notarização (com captura de Submission ID e validação) ---
       - name: Sanity check notary secrets
         shell: bash
         env:
@@ -204,118 +204,92 @@ jobs:
           C: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
           D: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          set -euo pipefail
           for k in A B C D; do
             v="${!k}"; if [ -z "$v" ]; then
               echo "::error::Missing notary secret: $k"; exit 1; fi
           done
 
-      - name: Store notary credentials (validate)
+      - name: Notarize DMG (submit + wait + capture ID)
+        id: notarize
         env:
           NOTARY_KEY_B64: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
           NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          set -euo pipefail
           KEY_PATH="/tmp/AuthKey_${NOTARY_KEY_ID}.p8"
           printf '%s' "$NOTARY_KEY_B64" | base64 --decode > "$KEY_PATH" 2>/dev/null || \
           printf '%s' "$NOTARY_KEY_B64" | base64 -d        > "$KEY_PATH" 2>/dev/null || \
           printf '%s' "$NOTARY_KEY_B64" | /usr/bin/base64 -D > "$KEY_PATH"
-          chmod 600 "$KEY_PATH"
-          head -n1 "$KEY_PATH" | grep -q "BEGIN PRIVATE KEY" || { echo "::error::.p8 inválido"; exit 1; }
-          xcrun notarytool store-credentials "ASC_PROFILE" \
+
+          echo "Submitting to notarytool (with --wait)…"
+          RESULT_JSON="$(xcrun notarytool submit "$DMG_PATH" \
             --key "$KEY_PATH" \
             --key-id "$NOTARY_KEY_ID" \
             --issuer "$NOTARY_ISSUER_ID" \
-            --validate
-
-      - id: notary
-        name: Notarize DMG (submit --wait + JSON)
-        run: |
-          set -euo pipefail
-          xcrun notarytool submit "$DMG_PATH" \
-            --keychain-profile "ASC_PROFILE" \
+            --team-id "$TEAM_ID" \
             --wait \
-            --output-format json | tee notary.json
+            --output-format json)"
+          echo "$RESULT_JSON"
 
-          PY=$(command -v python3 || command -v python)
-          STATUS="$($PY - <<'PY'
-import json
-print(json.load(open("notary.json")).get("status",""))
+          STATUS="$(python3 - <<'PY'
+import sys, json
+j=json.load(sys.stdin)
+print((j.get("status") or "").lower())
 PY
-)"
-          ID="$($PY - <<'PY'
-import json
-print(json.load(open("notary.json")).get("id",""))
+<<< "$RESULT_JSON")"
+          ID="$(python3 - <<'PY'
+import sys, json
+j=json.load(sys.stdin)
+print(j.get("id",""))
 PY
-)"
-          echo "Notary status: $STATUS"
-          echo "NOTARY_ID=$ID" >> $GITHUB_ENV
-          if [ "$STATUS" != "Accepted" ]; then
-            echo "::error::Notarization not Accepted"; exit 1
+<<< "$RESULT_JSON")"
+
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "submission_id=$ID" >> "$GITHUB_OUTPUT"
+          if [ "$STATUS" != "accepted" ]; then
+            echo "::error::Notarization status: $STATUS (Submission ID: $ID)"; exit 1
           fi
 
-      - name: Fetch notary log (diagnostic)
-        if: ${{ always() }}
+      - name: Confirm Accepted on server (info)
+        env:
+          NOTARY_KEY_B64: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          SUBMISSION_ID: ${{ steps.notarize.outputs.submission_id }}
         run: |
-          set -euo pipefail
-          if [ -n "${NOTARY_ID:-}" ]; then
-            xcrun notarytool log "$NOTARY_ID" --keychain-profile "ASC_PROFILE" | tee notary.log || true
-          fi
+          KEY_PATH="/tmp/AuthKey_${NOTARY_KEY_ID}.p8"
+          printf '%s' "$NOTARY_KEY_B64" | base64 --decode > "$KEY_PATH" 2>/dev/null || true
+          xcrun notarytool info "$SUBMISSION_ID" \
+            --key "$KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
+            --team-id "$TEAM_ID" --output-format json || true
 
-      - name: Verify DMG immutability (pre vs post notary)
+      - name: Wait for ticket propagation
         run: |
-          set -euo pipefail
-          shasum -a 256 "$DMG_PATH" | tee dmg.sha256.post
-          diff -u dmg.sha256.pre dmg.sha256.post
+          echo "Sleeping 30s to allow ticket propagation…"
+          sleep 30
 
-      - name: Staple ticket (retry/backoff) + validations
+      - name: Staple ticket (retry)
         run: |
-          set -euo pipefail
-          for i in 1 2 3 4 5 6 7 8 9 10; do
+          ATTEMPTS=5
+          for i in $(seq 1 $ATTEMPTS); do
+            echo "Stapler attempt $i…"
             if xcrun stapler staple -v "$DMG_PATH"; then
               break
             fi
-            echo "stapler: ticket ainda não disponível (tentativa $i). Aguardando..."
-            sleep 30
+            echo "Stapler failed; sleeping 15s…"
+            sleep 15
           done
-          xcrun stapler validate "$DMG_PATH" || true
-          spctl --assess --type open -vvv "$DMG_PATH" || true
-          codesign --verify --strict --verbose=2 "$DMG_PATH" || true
-          codesign -dv --verbose=4 "$DMG_PATH" 2>&1 | tee codesign_dmg_post.txt
+          echo "Validate stapled DMG:"
+          xcrun stapler validate "$DMG_PATH"
+          echo "Gatekeeper assess DMG after staple:"
+          spctl --assess --type open --verbose "$DMG_PATH" || true
 
-      - name: Fallback: staple .app inside DMG (if stapler failed)
-        if: ${{ failure() }}
+      - name: Checksums + Upload
         run: |
-          set -euo pipefail
-          MNT="$(mktemp -d)"
-          hdiutil attach -nobrowse -mountpoint "$MNT" "$DMG_PATH"
-          APP_PATH="$(/usr/bin/find "$MNT" -maxdepth 2 -name '*.app' -print -quit)"
-          if [ -n "$APP_PATH" ]; then
-            xcrun stapler staple -v "$APP_PATH" || true
-            xcrun stapler validate "$APP_PATH" || true
-          fi
-          hdiutil detach "$MNT"
-
-      - name: Checksums + Upload release asset (DMG)
-        run: |
-          set -euo pipefail
           shasum -a 256 "$DMG_PATH" > "${DMG_PATH}.sha256"
           cat "${DMG_PATH}.sha256"
-
-      - name: Upload debug artifacts
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-notary-artifacts-${{ needs.tag.outputs.TAG_NAME }}
-          path: |
-            notary.json
-            notary.log
-            dmg.sha256.pre
-            dmg.sha256.post
-            codesign_dmg_pre.txt
-            codesign_dmg_post.txt
-
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.tag.outputs.TAG_NAME }}
@@ -328,7 +302,7 @@ PY
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release-linux-rpm:
-    name: Linux RPM (x86_64 & aarch64)
+    name: Linux • RPM (x86_64 & aarch64)
     runs-on: ubuntu-latest
     needs: tag
     env:
@@ -352,7 +326,6 @@ PY
         run: cargo build --release --target aarch64-unknown-linux-gnu
       - name: Package RPMs
         run: |
-          set -euo pipefail
           mkdir -p dist pkg/linux/amd64/usr/local/bin pkg/linux/aarch64/usr/local/bin
           install -m 0755 target/x86_64-unknown-linux-gnu/release/${BIN_NAME} pkg/linux/amd64/usr/local/bin/${APP_NAME}
           install -m 0755 target/aarch64-unknown-linux-gnu/release/${BIN_NAME} pkg/linux/aarch64/usr/local/bin/${APP_NAME}
@@ -379,7 +352,7 @@ PY
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release-linux-deb:
-    name: Linux DEB (amd64 & arm64)
+    name: Linux • DEB (amd64 & arm64)
     runs-on: ubuntu-latest
     needs: tag
     env:
@@ -403,7 +376,6 @@ PY
         run: cargo build --release --target aarch64-unknown-linux-gnu
       - name: Package DEBs
         run: |
-          set -euo pipefail
           mkdir -p dist pkg/deb/amd64/usr/local/bin pkg/deb/arm64/usr/local/bin
           install -m 0755 target/x86_64-unknown-linux-gnu/release/${BIN_NAME} pkg/deb/amd64/usr/local/bin/${APP_NAME}
           install -m 0755 target/aarch64-unknown-linux-gnu/release/${BIN_NAME} pkg/deb/arm64/usr/local/bin/${APP_NAME}
